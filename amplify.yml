@@ -3,18 +3,20 @@ frontend:
   phases:
     preBuild:
       commands:
-        # ここが魔法の呪文です！Node.js 20を強制インストールして使います
         - nvm install 20
         - nvm use 20
         - node -v
         - npm ci
     build:
       commands:
+        - echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL"
         - npm run build
   artifacts:
-    baseDirectory: out
+    # SSRモード: .next ディレクトリを使用
+    baseDirectory: .next
     files:
       - "**/*"
   cache:
     paths:
       - node_modules/**/*
+      - .next/cache/**/*

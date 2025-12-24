@@ -1,22 +1,15 @@
-// import 文は削除します（これがエラーの原因の1つでした）
-
 const nextConfig = {
-  // 1. 静的書き出し設定
-  output: 'export',
+  // SSRモード（Amplify Web Compute対応）
+  // output: 'export' は削除してSSRを有効化
 
-  // 2. 画像最適化を無効化
+  // 画像最適化を無効化（外部画像のため）
   images: {
     unoptimized: true,
   },
 
-  // 3. TypeScriptエラーを無視
+  // TypeScriptエラーを無視（ビルド時）
   typescript: {
     ignoreBuildErrors: true,
-  },
-
-  // 4. ESLintチェックを無視
-  eslint: {
-    ignoreDuringBuilds: true,
   },
 };
 
