@@ -601,6 +601,7 @@ export default function DashboardPage() {
   // スカウト機能
   const [isScouting, setIsScouting] = useState(false);
   const [scoutedCrew, setScoutedCrew] = useState<ScoutResponse['crew'] | null>(null);
+  const [scoutGreeting, setScoutGreeting] = useState<string | null>(null); // スカウト時の挨拶
   const [showScoutModal, setShowScoutModal] = useState(false);
   const [scoutRarity, setScoutRarity] = useState<number | null>(null);
   const [partnerReaction, setPartnerReaction] = useState<string | null>(null);
@@ -788,6 +789,7 @@ export default function DashboardPage() {
 
       if (data.success && data.crew) {
         setScoutedCrew(data.crew);
+        setScoutGreeting(data.greeting); // トップレベルのgreetingを保存
         setScoutRarity(data.rarity);
         setPartnerReaction(data.partner_reaction);
         playSound('scout'); // スカウト成功音
@@ -1941,6 +1943,7 @@ export default function DashboardPage() {
                   playSound('confirm');
                   setShowScoutModal(false);
                   setScoutedCrew(null);
+                  setScoutGreeting(null);
                   setIsResumeFlipped(false);
                 }
               }}
@@ -2168,7 +2171,7 @@ export default function DashboardPage() {
                       >
                         <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-gray-50 dark:bg-gray-900 rotate-45" />
                         <p className="text-gray-700 dark:text-gray-200 text-sm leading-relaxed relative z-10">
-                          {scoutedCrew.greeting}
+                          {scoutGreeting || 'よろしくお願いします！'}
                         </p>
                       </motion.div>
 
@@ -2182,6 +2185,7 @@ export default function DashboardPage() {
                           playSound('confirm');
                           setShowScoutModal(false);
                           setScoutedCrew(null);
+                          setScoutGreeting(null);
                           setIsResumeFlipped(false);
                         }}
                         className="w-full mt-6 bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-yellow-500 hover:to-orange-500 text-yellow-900 font-bold py-3 rounded-xl shadow-lg transition-all"
