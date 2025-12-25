@@ -1,11 +1,11 @@
 'use client';
 
-import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, TrendingUp, Crown, ClipboardList, Target } from 'lucide-react';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useAppSound } from '@/contexts/SoundContext';
 import { apiUrl } from '@/lib/api';
+import CrewImage from './CrewImage';
 
 // 新しいスキル型（API連携用）
 export type CrewSkillInfo = {
@@ -264,7 +264,7 @@ export default function CrewCard({ crew, onDetail, onViewLog, isLevelingUp, onLe
           animate={showLevelUpEffect ? { scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] } : {}}
           transition={{ type: 'spring', stiffness: 300 }}
         >
-          <Image
+          <CrewImage
             src={crew.image}
             alt={crew.name}
             fill

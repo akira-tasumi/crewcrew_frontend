@@ -1,7 +1,6 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import Image from 'next/image';
 import { X, Crown, Lock, Zap, Coins, Star, Plus, Target } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import type { Crew } from './CrewCard';
@@ -10,6 +9,7 @@ import GadgetShopModal from './GadgetShopModal';
 import GadgetUpgradeModal, { type EquippedGadget } from './GadgetUpgradeModal';
 import { useAppSound } from '@/contexts/SoundContext';
 import { apiUrl } from '@/lib/api';
+import CrewImage from './CrewImage';
 
 // スキル情報の型
 type SkillInfo = {
@@ -589,7 +589,7 @@ export default function CrewDetailModal({
                     filter: `drop-shadow(0 25px 50px ${theme.glow})`,
                   }}
                 >
-                  <Image
+                  <CrewImage
                     src={displayCrew?.image || crew.image}
                     alt={displayCrew?.name || crew.name}
                     fill

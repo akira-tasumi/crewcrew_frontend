@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Image from 'next/image';
+import CrewImage from '@/components/CrewImage';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send,
@@ -284,7 +284,7 @@ function CrewMiniIcon({ image, name, isWorking }: { image: string; name: string;
       transition={isWorking ? { duration: 0.6, repeat: Infinity, ease: 'easeInOut' } : {}}
     >
       <div className={`w-10 h-10 rounded-full overflow-hidden border-2 ${isWorking ? 'border-yellow-400' : 'border-gray-200 dark:border-gray-700'} bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900 dark:to-pink-900`}>
-        <Image
+        <CrewImage
           src={image}
           alt={name}
           width={40}
@@ -339,7 +339,7 @@ function ResultModal({
           <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white/50 bg-white/20">
-                <Image
+                <CrewImage
                   src={crewImage}
                   alt={task.crewName}
                   width={48}
@@ -521,7 +521,7 @@ function PartnerDisplayCompact({
           whileTap={{ scale: 0.95 }}
         >
           <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-purple-400 shadow-md bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-800 dark:to-pink-800">
-            <Image
+            <CrewImage
               src={partner.image}
               alt={partner.name}
               width={56}
@@ -1560,7 +1560,7 @@ export default function DashboardPage() {
                 {partner ? (
                   <>
                     <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-400 bg-purple-100 dark:bg-purple-800">
-                      <Image
+                      <CrewImage
                         src={partner.image}
                         alt={partner.name}
                         width={40}
@@ -1644,7 +1644,7 @@ export default function DashboardPage() {
                   }`}
                 >
                   <div className="w-6 h-6 rounded-full overflow-hidden bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900 dark:to-pink-900">
-                    <Image
+                    <CrewImage
                       src={crew.image}
                       alt={crew.name}
                       width={24}
@@ -1677,7 +1677,7 @@ export default function DashboardPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-400 bg-gradient-to-br from-purple-100 to-pink-100 shrink-0">
-                  <Image
+                  <CrewImage
                     src={partner.image}
                     alt={partner.name}
                     width={40}
@@ -2256,7 +2256,7 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-3">
                     {webSummaryResult.crew_image && (
                       <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white/50 bg-white/20">
-                        <Image
+                        <CrewImage
                           src={webSummaryResult.crew_image}
                           alt={webSummaryResult.crew_name || 'クルー'}
                           width={48}
@@ -2304,7 +2304,7 @@ export default function DashboardPage() {
                         transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
                       >
                         <div className="w-16 h-16 rounded-full overflow-hidden border-3 border-cyan-400 shadow-lg bg-gradient-to-br from-cyan-100 to-blue-100 dark:from-cyan-800 dark:to-blue-800">
-                          <Image
+                          <CrewImage
                             src={webSummaryResult.crew_image}
                             alt={webSummaryResult.crew_name || 'クルー'}
                             width={64}
@@ -2395,7 +2395,7 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-3">
                     {fileSummaryResult.crew_image && (
                       <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white/50 bg-white/20">
-                        <Image
+                        <CrewImage
                           src={fileSummaryResult.crew_image}
                           alt={fileSummaryResult.crew_name || 'クルー'}
                           width={48}
@@ -2445,7 +2445,7 @@ export default function DashboardPage() {
                         transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
                       >
                         <div className="w-16 h-16 rounded-full overflow-hidden border-3 border-orange-400 shadow-lg bg-gradient-to-br from-orange-100 to-amber-100 dark:from-orange-800 dark:to-amber-800">
-                          <Image
+                          <CrewImage
                             src={fileSummaryResult.crew_image}
                             alt={fileSummaryResult.crew_name || 'クルー'}
                             width={64}
@@ -2575,7 +2575,7 @@ export default function DashboardPage() {
                           transition={{ duration: isProjectExecuting ? 0.5 : 2, repeat: Infinity }}
                           className="w-14 h-14 rounded-full overflow-hidden border-3 border-white/50 bg-white/20"
                         >
-                          <Image
+                          <CrewImage
                             src={projectPlan.partner_image}
                             alt={projectPlan.partner_name || 'PM'}
                             width={56}
@@ -2675,7 +2675,7 @@ export default function DashboardPage() {
 
                                 {/* クルー情報 */}
                                 <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-md">
-                                  <Image
+                                  <CrewImage
                                     src={task.assigned_crew_image}
                                     alt={task.assigned_crew_name}
                                     width={40}
@@ -2760,7 +2760,7 @@ export default function DashboardPage() {
                                 className="flex flex-col items-center gap-1 p-3 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/30 dark:to-indigo-900/30 rounded-xl border border-purple-200 dark:border-purple-700"
                               >
                                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-purple-400 bg-purple-100 dark:bg-purple-800">
-                                  <Image
+                                  <CrewImage
                                     src={task.assigned_crew_image}
                                     alt={task.assigned_crew_name}
                                     width={48}

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import Image from 'next/image';
+import CrewImage from '@/components/CrewImage';
 import { Play, FileText, X, CheckCircle, Loader2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAppSound } from '@/contexts/SoundContext';
@@ -218,7 +218,7 @@ export default function CollaborationDemo({
                     }
                     transition={{ duration: 1.5, repeat: phase === 'analyst_thinking' ? Infinity : 0 }}
                   >
-                    <Image
+                    <CrewImage
                       src={analystAgent.image}
                       alt={analystAgent.name}
                       width={80}
@@ -329,7 +329,7 @@ export default function CollaborationDemo({
                     }
                     transition={{ duration: 1.5, repeat: phase === 'writer_writing' ? Infinity : 0 }}
                   >
-                    <Image
+                    <CrewImage
                       src={writerAgent.image}
                       alt={writerAgent.name}
                       width={80}

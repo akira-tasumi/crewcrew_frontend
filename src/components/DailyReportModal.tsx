@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import Image from 'next/image';
+import CrewImage from '@/components/CrewImage';
 import { X, CalendarCheck, Stamp, Coins, CheckCircle } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import confetti from 'canvas-confetti';
@@ -392,7 +392,7 @@ export default function DailyReportModal({
                       animate={{ y: [0, -4, 0] }}
                       transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
                     >
-                      <Image
+                      <CrewImage
                         src={partner.image}
                         alt={partner.name}
                         width={80}

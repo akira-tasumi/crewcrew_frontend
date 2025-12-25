@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import Image from 'next/image';
+import CrewImage from '@/components/CrewImage';
 import { RefreshCw, MessageCircle, Loader2 } from 'lucide-react';
 import {
   Building2,
@@ -521,7 +521,7 @@ export default function OfficePage() {
                 whileTap={{ scale: 0.95 }}
               >
                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-purple-400 shadow-lg bg-gradient-to-br from-purple-100 to-pink-100">
-                  <Image
+                  <CrewImage
                     src={partner.image}
                     alt={partner.name}
                     width={48}
@@ -624,7 +624,7 @@ export default function OfficePage() {
                       onClick={() => openDetailModal(selectedCrewData)}
                     >
                       <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-white/50 bg-white/20 hover:border-purple-400 transition-colors">
-                        <Image
+                        <CrewImage
                           src={selectedCrewData.image}
                           alt={selectedCrewData.name}
                           width={56}
@@ -780,7 +780,7 @@ export default function OfficePage() {
                               className="flex items-center gap-2 p-1.5 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors"
                             >
                               <div className="w-6 h-6 rounded-full overflow-hidden bg-purple-900/50">
-                                <Image
+                                <CrewImage
                                   src={crewData.image}
                                   alt={crewData.name}
                                   width={24}

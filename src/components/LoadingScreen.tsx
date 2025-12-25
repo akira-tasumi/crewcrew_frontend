@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Image from "next/image";
+import CrewImage from "@/components/CrewImage";
 
 // ランダムメッセージ
 const LOADING_MESSAGES = [
@@ -115,7 +115,7 @@ export default function LoadingScreen({
               className="relative mx-auto w-24 h-24 mb-6"
             >
               <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-white/30 shadow-xl bg-gradient-to-br from-purple-400 to-pink-400">
-                <Image
+                <CrewImage
                   src={partnerImage}
                   alt="Loading"
                   width={96}

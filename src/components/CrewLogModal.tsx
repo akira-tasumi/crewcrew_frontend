@@ -1,11 +1,11 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import Image from 'next/image';
 import { X, ClipboardList, CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { Crew } from './CrewCard';
 import { apiUrl } from '@/lib/api';
+import CrewImage from './CrewImage';
 
 type TaskLog = {
   id: number;
@@ -118,7 +118,7 @@ export default function CrewLogModal({ isOpen, onClose, crew }: Props) {
           <div className="bg-gradient-to-r from-blue-500 to-cyan-500 p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white/50 bg-white/20">
-                <Image
+                <CrewImage
                   src={crew.image}
                   alt={crew.name}
                   width={48}
