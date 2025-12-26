@@ -18,9 +18,24 @@ export type UserData = {
 export type ApiUser = {
   id: number;
   company_name: string;
+  user_name: string | null;
+  job_title: string | null;
+  avatar_data: string | null;
   coin: number;
   ruby: number;
   rank: string;
+  office_level: number;
+};
+
+// ログインレスポンスの型
+type LoginResponse = {
+  success: boolean;
+  message: string;
+  user_id?: number;
+  username?: string;
+  user_name?: string;
+  company_name?: string;
+  is_demo?: boolean;
 };
 
 // コンテキストの型定義
@@ -30,6 +45,7 @@ type UserContextType = {
   isLoading: boolean;
   isLoggedIn: boolean;
   login: (name: string) => void;
+  loginWithCredentials: (username: string, password: string) => Promise<LoginResponse>;
   logout: () => void;
   updateUser: (updates: Partial<UserData>) => void;
   addExp: (amount: number) => void;
@@ -114,7 +130,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  // ログイン処理
+  // ログイン処理（従来の名前のみ）
   const login = (name: string) => {
     const newUser: UserData = {
       id: generateId(),
@@ -128,11 +144,54 @@ export function UserProvider({ children }: { children: ReactNode }) {
     router.push('/');
   };
 
+  // ID/パスワードでログイン
+  const loginWithCredentials = async (username: string, password: string): Promise<LoginResponse> => {
+    try {
+      const res = await fetch(apiUrl('/api/auth/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data: LoginResponse = await res.json();
+
+      if (data.success && data.user_id) {
+        // ローカルユーザー情報を保存
+        const newUser: UserData = {
+          id: String(data.user_id),
+          name: data.user_name || data.username || username,
+          level: 1,
+          exp: 0,
+          gold: 3000,
+          createdAt: new Date().toISOString(),
+        };
+        setUser(newUser);
+
+        // APIユーザー情報を取得
+        await refreshApiUser();
+
+        router.push('/');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Login error:', error);
+      return {
+        success: false,
+        message: 'ログインに失敗しました',
+      };
+    }
+  };
+
   // ログアウト処理
   const logout = () => {
-    setUser(null);
+    // 先にlocalStorageを削除
     localStorage.removeItem(STORAGE_KEY);
-    router.push('/login');
+    // stateをクリア
+    setUser(null);
+    setApiUser(null);
+    // ログインページへ遷移（ページ全体をリロード）
+    window.location.href = '/login';
   };
 
   // ユーザー情報の更新
@@ -208,6 +267,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     isLoading,
     isLoggedIn: !!user,
     login,
+    loginWithCredentials,
     logout,
     updateUser,
     addExp,

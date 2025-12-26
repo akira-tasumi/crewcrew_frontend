@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Coins, Gem, Building2, Crown, User, ChevronDown, Moon, Sun, Volume2, VolumeX, Clock } from 'lucide-react';
+import { Coins, Gem, Building2, Crown, User, ChevronDown, Moon, Sun, Volume2, VolumeX, Clock, LogOut } from 'lucide-react';
 import { useAppSound } from '@/contexts/SoundContext';
 import { useUser } from '@/contexts/UserContext';
 import confetti from 'canvas-confetti';
@@ -313,21 +314,120 @@ function DigitalClock() {
 }
 
 function UserProfile() {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { apiUser, logout } = useUser();
+  const { playSound } = useAppSound();
+  const router = useRouter();
+
+  // メニュー外クリックで閉じる
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    if (isMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
+  const handleMenuToggle = () => {
+    playSound('click');
+    setIsMenuOpen(!isMenuOpen);
+  };
+
+  const handleMyPage = () => {
+    playSound('click');
+    setIsMenuOpen(false);
+    router.push('/mypage');
+  };
+
+  const handleLogout = () => {
+    playSound('click');
+    setIsMenuOpen(false);
+    // UserContextのlogoutを使用
+    logout();
+  };
+
   return (
     <div className="flex items-center gap-3 pl-4 border-l border-gray-200 dark:border-gray-700">
       <DigitalClock />
       <div className="flex items-center gap-2">
         <SoundToggle />
         <ThemeToggle />
-        <button className="flex items-center gap-1 group ml-1">
-          <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full flex items-center justify-center ring-2 ring-white dark:ring-gray-800 shadow-md group-hover:ring-purple-300 transition-all">
-            <User size={20} className="text-white" />
-          </div>
-          <ChevronDown
-            size={16}
-            className="text-gray-400 group-hover:text-purple-500 transition-colors"
-          />
-        </button>
+        <div ref={menuRef} className="relative">
+          <button
+            onClick={handleMenuToggle}
+            className="flex items-center gap-1 group ml-1"
+          >
+            <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full flex items-center justify-center ring-2 ring-white dark:ring-gray-800 shadow-md group-hover:ring-purple-300 transition-all overflow-hidden">
+              {apiUser?.avatar_data ? (
+                <img
+                  src={apiUser.avatar_data}
+                  alt="Avatar"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User size={20} className="text-white" />
+              )}
+            </div>
+            <motion.div
+              animate={{ rotate: isMenuOpen ? 180 : 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ChevronDown
+                size={16}
+                className="text-gray-400 group-hover:text-purple-500 transition-colors"
+              />
+            </motion.div>
+          </button>
+
+          {/* ドロップダウンメニュー */}
+          <AnimatePresence>
+            {isMenuOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50"
+              >
+                {/* ユーザー情報 */}
+                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+                  <p className="text-sm font-bold text-gray-800 dark:text-gray-100">
+                    {apiUser?.user_name || 'ユーザー'}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {apiUser?.company_name}
+                  </p>
+                </div>
+
+                {/* メニュー項目 */}
+                <div className="py-1">
+                  <button
+                    onClick={handleMyPage}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 flex items-center gap-3 transition-colors"
+                  >
+                    <User size={16} className="text-purple-500" />
+                    マイページ
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-2.5 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 flex items-center gap-3 transition-colors"
+                  >
+                    <LogOut size={16} />
+                    ログアウト
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );

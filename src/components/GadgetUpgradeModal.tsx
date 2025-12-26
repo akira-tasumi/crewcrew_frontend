@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Coins, Zap, Brain, Heart, ArrowUp, Sparkles } from 'lucide-react';
+import { X, Coins, Zap, Brain, Heart, ArrowUp, Sparkles, Unplug } from 'lucide-react';
 import { useState } from 'react';
 import { useAppSound } from '@/contexts/SoundContext';
 import confetti from 'canvas-confetti';
@@ -27,6 +27,7 @@ type Props = {
   gadget: EquippedGadget | null;
   userCoin: number;
   onUpgraded: (newCoin: number, upgradedGadget: EquippedGadget) => void;
+  onUnequipped?: () => void;
 };
 
 // スキルタイプに合わせたエフェクト表示
@@ -62,8 +63,10 @@ export default function GadgetUpgradeModal({
   gadget,
   userCoin,
   onUpgraded,
+  onUnequipped,
 }: Props) {
   const [upgrading, setUpgrading] = useState(false);
+  const [unequipping, setUnequipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSuccessEffect, setShowSuccessEffect] = useState(false);
   const { playSound } = useAppSound();
@@ -123,6 +126,38 @@ export default function GadgetUpgradeModal({
       playSound('error');
     } finally {
       setUpgrading(false);
+    }
+  };
+
+  // 装備解除
+  const handleUnequip = async () => {
+    if (unequipping) return;
+
+    setUnequipping(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        apiUrl(`/api/crews/${crewId}/gadgets/${gadget.gadget_id}/unequip`),
+        { method: 'POST' }
+      );
+
+      const data = await res.json();
+
+      if (data.success) {
+        playSound('success');
+        onUnequipped?.();
+        onClose();
+      } else {
+        setError(data.error || '解除に失敗しました');
+        playSound('error');
+      }
+    } catch (err) {
+      console.error('Failed to unequip gadget:', err);
+      setError('解除に失敗しました');
+      playSound('error');
+    } finally {
+      setUnequipping(false);
     }
   };
 
@@ -311,6 +346,31 @@ export default function GadgetUpgradeModal({
                 コインが足りません
               </p>
             )}
+
+            {/* 外すボタン */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleUnequip}
+              disabled={unequipping}
+              className="w-full mt-3 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-600 transition-all"
+            >
+              {unequipping ? (
+                <>
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 0.5, repeat: Infinity, ease: 'linear' }}
+                    className="w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+                  />
+                  解除中...
+                </>
+              ) : (
+                <>
+                  <Unplug size={18} />
+                  外す
+                </>
+              )}
+            </motion.button>
           </div>
         </motion.div>
       </motion.div>

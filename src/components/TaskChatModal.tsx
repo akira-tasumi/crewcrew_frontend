@@ -124,7 +124,7 @@ export default function TaskChatModal({
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // メッセージ追加のヘルパー
   const addMessage = useCallback((
@@ -370,14 +370,37 @@ export default function TaskChatModal({
               className="p-4 border-t border-white/10 bg-black/20"
             >
               <div className="flex gap-2">
-                <input
+                <textarea
                   ref={inputRef}
-                  type="text"
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={isProcessing ? '処理中...' : 'タスクを入力...'}
+                  onChange={(e) => {
+                    setInputValue(e.target.value);
+                    // 自動高さ調整
+                    const textarea = e.target;
+                    textarea.style.height = 'auto';
+                    const newHeight = Math.min(textarea.scrollHeight, 128);
+                    textarea.style.height = `${newHeight}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (e.ctrlKey || e.shiftKey) {
+                        // Ctrl+Enter or Shift+Enter: 改行を挿入
+                        // デフォルト動作（改行）を許可
+                        return;
+                      } else {
+                        // Enter only: 送信
+                        e.preventDefault();
+                        if (inputValue.trim() && !isProcessing) {
+                          handleSubmit(e as unknown as React.FormEvent);
+                        }
+                      }
+                    }
+                  }}
+                  placeholder={isProcessing ? '処理中...' : 'タスクを入力... (Ctrl+Enterで改行)'}
                   disabled={isProcessing}
-                  className="flex-1 bg-white/10 text-white placeholder-gray-500 rounded-xl px-4 py-3 text-sm border border-white/10 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all disabled:opacity-50"
+                  rows={1}
+                  style={{ minHeight: '44px' }}
+                  className="flex-1 bg-white/10 text-white placeholder-gray-500 rounded-xl px-4 py-3 text-sm border border-white/10 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all disabled:opacity-50 resize-none overflow-y-auto"
                 />
                 <motion.button
                   type="submit"

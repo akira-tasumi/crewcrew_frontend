@@ -1029,7 +1029,7 @@ export default function CrewDetailModal({
         </motion.div>
       </motion.div>
 
-      {/* ガジェットショップモーダル */}
+      {/* ガジェット選択モーダル（購入済みガジェットから選択） */}
       <GadgetShopModal
         key="gadget-shop-modal"
         isOpen={showGadgetShop}
@@ -1037,11 +1037,7 @@ export default function CrewDetailModal({
         crewId={crew.id}
         crewName={crew.name}
         slotIndex={selectedSlotIndex}
-        userCoin={localCoin}
-        onEquipped={(newCoin) => {
-          // コインをグローバルに更新
-          updateCoin(newCoin);
-          onCoinUpdated?.(newCoin);
+        onEquipped={() => {
           fetchEquippedGadgets();
         }}
       />
@@ -1063,6 +1059,11 @@ export default function CrewDetailModal({
             prev.map(g => g.id === upgradedGadget.id ? upgradedGadget : g)
           );
           setSelectedGadgetForUpgrade(upgradedGadget);
+        }}
+        onUnequipped={() => {
+          // 装備解除後、ガジェット一覧を再取得
+          fetchEquippedGadgets();
+          setSelectedGadgetForUpgrade(null);
         }}
       />
 

@@ -29,6 +29,9 @@ import {
   ArrowRight,
   Users,
   ChevronRight,
+  Paperclip,
+  Image as ImageIcon,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useRef } from 'react';
 import { emitCrewExpUpdate } from '@/lib/crewEvents';
@@ -632,6 +635,15 @@ export default function DashboardPage() {
   const [fileSummaryResult, setFileSummaryResult] = useState<FileSummaryResponse | null>(null);
   const [showFileSummaryModal, setShowFileSummaryModal] = useState(false);
 
+  // テキスト入力時の添付ファイル機能
+  type AttachedFile = {
+    file: globalThis.File;
+    preview: string | null;  // 画像のプレビューURL
+    type: 'image' | 'excel' | 'csv' | 'pdf' | 'text' | 'word' | 'powerpoint';
+  };
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const chatFileInputRef = useRef<HTMLInputElement>(null);
+
   // Director Mode（プロジェクト機能）
   const [projectGoal, setProjectGoal] = useState('');
   const [isLoadingProjectPlan, setIsLoadingProjectPlan] = useState(false);
@@ -1028,7 +1040,14 @@ export default function DashboardPage() {
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      handleFileSummary(files[0]);
+      // テキスト入力モードの場合は添付ファイルに追加
+      if (inputMode === 'text') {
+        handleAttachFiles(files);
+        playSound('click');
+      } else {
+        // ファイルモードの場合は従来の処理
+        handleFileSummary(files[0]);
+      }
     }
   };
 
@@ -1215,9 +1234,104 @@ export default function DashboardPage() {
     setProjectExecutionResults([]);
   };
 
+  // ファイルタイプを判定
+  const getFileType = (filename: string): 'image' | 'excel' | 'csv' | 'pdf' | 'text' | 'word' | 'powerpoint' | 'unknown' => {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.gif')) {
+      return 'image';
+    }
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      return 'excel';
+    }
+    if (lower.endsWith('.csv')) {
+      return 'csv';
+    }
+    if (lower.endsWith('.pdf')) {
+      return 'pdf';
+    }
+    if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.json') || lower.endsWith('.xml')) {
+      return 'text';
+    }
+    if (lower.endsWith('.docx')) {
+      return 'word';
+    }
+    if (lower.endsWith('.pptx')) {
+      return 'powerpoint';
+    }
+    return 'unknown';
+  };
+
+  // ファイルを添付リストに追加
+  const handleAttachFiles = (files: FileList | null) => {
+    if (!files) return;
+
+    const newFiles: AttachedFile[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileType = getFileType(file.name);
+      if (fileType === 'unknown') {
+        playSound('error');
+        alert(`サポートされていないファイル形式です: ${file.name}\n\n対応形式: 画像(.png, .jpg, .jpeg, .webp), Excel(.xlsx, .xls), CSV(.csv), PDF(.pdf)`);
+        continue;
+      }
+
+      // 画像の場合はプレビューURLを生成
+      let preview: string | null = null;
+      if (fileType === 'image') {
+        preview = URL.createObjectURL(file);
+      }
+
+      newFiles.push({ file, preview, type: fileType });
+    }
+
+    if (newFiles.length > 0) {
+      playSound('click');
+      setAttachedFiles(prev => [...prev, ...newFiles]);
+    }
+  };
+
+  // 添付ファイルを削除
+  const removeAttachedFile = (index: number) => {
+    setAttachedFiles(prev => {
+      const updated = [...prev];
+      // プレビューURLを解放
+      if (updated[index].preview) {
+        URL.revokeObjectURL(updated[index].preview);
+      }
+      updated.splice(index, 1);
+      return updated;
+    });
+    playSound('click');
+  };
+
+  // クリップボードからの画像貼り付け
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          const preview = URL.createObjectURL(file);
+          playSound('click');
+          setAttachedFiles(prev => [...prev, {
+            file,
+            preview,
+            type: 'image'
+          }]);
+        }
+        break;
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isSubmitting) return;
+    // テキストもファイルもない場合は何もしない
+    if ((!inputValue.trim() && attachedFiles.length === 0) || isSubmitting) return;
 
     // 選択されたクルーを取得
     const crew = crews.find((c) => c.id === selectedCrewId);
@@ -1225,8 +1339,10 @@ export default function DashboardPage() {
 
     playSound('click'); // 送信音
 
-    const taskText = inputValue;
+    const taskText = inputValue.trim() || '添付ファイルを分析してください';
+    const filesToSend = [...attachedFiles];  // 添付ファイルをコピー
     setInputValue('');
+    setAttachedFiles([]);  // 添付ファイルをクリア
 
     setIsSubmitting(true);
 
@@ -1234,7 +1350,7 @@ export default function DashboardPage() {
     const newTaskId = Date.now();
     const newTask: Task = {
       id: newTaskId,
-      title: taskText,
+      title: taskText + (filesToSend.length > 0 ? ` (+${filesToSend.length}ファイル)` : ''),
       status: 'in_progress',
       crewId: crew.id,
       crewName: crew.name,
@@ -1243,18 +1359,38 @@ export default function DashboardPage() {
     setTasks((prev) => [newTask, ...prev]);
 
     try {
-      // APIを呼び出し（Google認証済みの場合はアクセストークンも送信）
-      const response = await fetch(apiUrl('/api/execute-task'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          crew_id: crew.id,
-          task: taskText,
-          google_access_token: session?.accessToken || null,
-        }),
-      });
+      let response: Response;
+
+      if (filesToSend.length > 0) {
+        // ファイル添付がある場合はFormDataを使用
+        const formData = new FormData();
+        formData.append('crew_id', crew.id.toString());
+        formData.append('task', taskText);
+        if (session?.accessToken) {
+          formData.append('google_access_token', session.accessToken);
+        }
+        filesToSend.forEach((attached) => {
+          formData.append('files', attached.file);
+        });
+
+        response = await fetch(apiUrl('/api/execute-task-with-files'), {
+          method: 'POST',
+          body: formData,
+        });
+      } else {
+        // ファイルがない場合は従来のJSON形式
+        response = await fetch(apiUrl('/api/execute-task'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            crew_id: crew.id,
+            task: taskText,
+            google_access_token: session?.accessToken || null,
+          }),
+        });
+      }
 
       const data: ExecuteTaskResponse = await response.json();
 
@@ -1477,42 +1613,8 @@ export default function DashboardPage() {
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              <FileEdit size={18} />
-              テキスト入力
-            </motion.button>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                playSound('select');
-                setInputMode('url');
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
-                inputMode === 'url'
-                  ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              <Link size={18} />
-              URL読込
-            </motion.button>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                playSound('select');
-                setInputMode('file');
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
-                inputMode === 'file'
-                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              <FolderOpen size={18} />
-              ファイル
+              <Send size={18} />
+              タスク依頼
             </motion.button>
             <motion.button
               type="button"
@@ -1535,149 +1637,167 @@ export default function DashboardPage() {
 
           {/* テキスト入力モード */}
           {inputMode === 'text' && (
-            <form onSubmit={handleSubmit} className="flex gap-3 mb-4">
-              <div className="flex-1 relative">
-                <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="タスクを入力してください（例: 今週の売上データをまとめて）"
-                  disabled={isSubmitting}
-                  className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 text-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all disabled:opacity-50"
-                />
-              </div>
-              <motion.button
-                type="submit"
-                disabled={isSubmitting || !inputValue.trim()}
-                whileHover={!isSubmitting ? { scale: 1.02 } : {}}
-                whileTap={!isSubmitting ? { scale: 0.98 } : {}}
-                animate={isSubmitting ? { boxShadow: ['0 0 0 0 rgba(168, 85, 247, 0)', '0 0 20px 10px rgba(168, 85, 247, 0.4)', '0 0 0 0 rgba(168, 85, 247, 0)'] } : {}}
-                transition={isSubmitting ? { duration: 0.8, repeat: Infinity } : {}}
-                className="bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-600 hover:to-pink-600 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold px-8 py-4 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-fuchsia-500/30 min-w-[140px] justify-center"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 size={20} className="animate-spin" />
-                    実行中...
-                  </>
-                ) : (
-                  <>
-                    <Send size={20} />
-                    依頼
-                  </>
-                )}
-              </motion.button>
-            </form>
-          )}
+            <div
+              className={`mb-4 relative rounded-xl transition-all ${
+                isDragging
+                  ? 'ring-2 ring-purple-500 ring-offset-2 bg-purple-50 dark:bg-purple-900/20'
+                  : ''
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* ドラッグ中のオーバーレイ */}
+              {isDragging && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-purple-100/80 dark:bg-purple-900/50 rounded-xl border-2 border-dashed border-purple-500">
+                  <div className="text-center">
+                    <Upload size={40} className="mx-auto text-purple-500 mb-2" />
+                    <p className="text-purple-600 dark:text-purple-300 font-medium">ファイルをドロップして添付</p>
+                  </div>
+                </div>
+              )}
 
-          {/* URL読込モード */}
-          {inputMode === 'url' && (
-            <form onSubmit={handleWebSummary} className="flex gap-3 mb-4">
-              <div className="flex-1 relative">
-                <Globe size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-cyan-500" />
-                <input
-                  type="text"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="記事のURLをここに貼り付け..."
-                  disabled={isLoadingWebSummary}
-                  className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-cyan-300 dark:border-cyan-600 bg-cyan-50 dark:bg-cyan-900/20 text-gray-800 dark:text-gray-100 text-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all disabled:opacity-50"
-                />
-              </div>
-              <motion.button
-                type="submit"
-                disabled={isLoadingWebSummary || !urlInput.trim()}
-                whileHover={!isLoadingWebSummary ? { scale: 1.02 } : {}}
-                whileTap={!isLoadingWebSummary ? { scale: 0.98 } : {}}
-                animate={isLoadingWebSummary ? { boxShadow: ['0 0 0 0 rgba(6, 182, 212, 0)', '0 0 20px 10px rgba(6, 182, 212, 0.4)', '0 0 0 0 rgba(6, 182, 212, 0)'] } : {}}
-                transition={isLoadingWebSummary ? { duration: 0.8, repeat: Infinity } : {}}
-                className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold px-8 py-4 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-cyan-500/30 min-w-[140px] justify-center"
-              >
-                {isLoadingWebSummary ? (
-                  <>
-                    <Loader2 size={20} className="animate-spin" />
-                    読込中...
-                  </>
-                ) : (
-                  <>
-                    <FileText size={20} />
-                    要約
-                  </>
-                )}
-              </motion.button>
-            </form>
-          )}
-
-          {/* ファイルアップロードモード */}
-          {inputMode === 'file' && (
-            <div className="mb-4">
               {/* 隠しファイル入力 */}
               <input
-                ref={fileInputRef}
+                ref={chatFileInputRef}
                 type="file"
-                accept=".pdf"
-                onChange={handleFileInputChange}
+                accept=".png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.csv,.pdf,.txt,.md,.json,.xml,.docx,.pptx"
+                multiple
+                onChange={(e) => handleAttachFiles(e.target.files)}
                 className="hidden"
               />
 
-              {/* ドラッグ&ドロップエリア */}
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => !isLoadingFileSummary && fileInputRef.current?.click()}
-                className={`relative border-2 border-dashed rounded-2xl p-8 transition-all cursor-pointer ${
-                  isLoadingFileSummary
-                    ? 'border-orange-300 bg-orange-50 dark:bg-orange-900/20 cursor-wait'
-                    : isDragging
-                    ? 'border-orange-500 bg-orange-100 dark:bg-orange-900/30 scale-[1.02]'
-                    : 'border-orange-300 dark:border-orange-600 bg-orange-50/50 dark:bg-orange-900/10 hover:border-orange-400 hover:bg-orange-100/50 dark:hover:bg-orange-900/20'
-                }`}
-              >
-                {isLoadingFileSummary ? (
-                  // ローディング表示
-                  <div className="flex flex-col items-center justify-center gap-4">
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                      className="w-16 h-16 rounded-full border-4 border-orange-200 border-t-orange-500"
-                    />
-                    <div className="text-center">
-                      <p className="text-orange-700 dark:text-orange-300 font-bold text-lg">
-                        PDF解析中...
-                      </p>
-                      <p className="text-orange-600/70 dark:text-orange-400/70 text-sm mt-1">
-                        クルーが資料を読み込んでいます
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  // 通常表示
-                  <div className="flex flex-col items-center justify-center gap-3">
-                    <motion.div
-                      animate={isDragging ? { scale: [1, 1.1, 1] } : {}}
-                      transition={{ duration: 0.5, repeat: Infinity }}
-                      className="w-16 h-16 rounded-full bg-gradient-to-br from-orange-400 to-amber-400 flex items-center justify-center shadow-lg"
-                    >
-                      <Upload size={28} className="text-white" />
-                    </motion.div>
-                    <div className="text-center">
-                      <p className="text-gray-700 dark:text-gray-200 font-bold text-lg">
-                        {isDragging ? 'ここにドロップ！' : 'PDFをドラッグ＆ドロップ'}
-                      </p>
-                      <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-                        またはクリックしてファイルを選択
-                      </p>
-                      <p className="text-gray-400 dark:text-gray-500 text-xs mt-2">
-                        対応形式: PDF（最大10MB）
-                      </p>
-                    </div>
-                  </div>
+              {/* 添付ファイルプレビュー */}
+              <AnimatePresence>
+                {attachedFiles.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mb-3 flex flex-wrap gap-2"
+                  >
+                    {attachedFiles.map((attached, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0, opacity: 0 }}
+                        className="relative group"
+                      >
+                        {attached.type === 'image' && attached.preview ? (
+                          <div className="w-20 h-20 rounded-lg overflow-hidden border-2 border-purple-300 dark:border-purple-600">
+                            <img
+                              src={attached.preview}
+                              alt={attached.file.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-20 h-20 rounded-lg border-2 border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 flex flex-col items-center justify-center p-2">
+                            {attached.type === 'excel' || attached.type === 'csv' ? (
+                              <FileSpreadsheet size={24} className="text-green-500" />
+                            ) : attached.type === 'pdf' ? (
+                              <FileText size={24} className="text-red-500" />
+                            ) : attached.type === 'word' ? (
+                              <FileText size={24} className="text-blue-500" />
+                            ) : attached.type === 'powerpoint' ? (
+                              <FileText size={24} className="text-orange-500" />
+                            ) : attached.type === 'text' ? (
+                              <FileText size={24} className="text-gray-500" />
+                            ) : (
+                              <File size={24} className="text-gray-400" />
+                            )}
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 truncate w-full text-center">
+                              {attached.file.name.length > 10
+                                ? attached.file.name.slice(0, 8) + '...'
+                                : attached.file.name}
+                            </span>
+                          </div>
+                        )}
+                        {/* 削除ボタン */}
+                        <button
+                          type="button"
+                          onClick={() => removeAttachedFile(index)}
+                          className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                        >
+                          <X size={12} />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </motion.div>
                 )}
-              </motion.div>
+              </AnimatePresence>
+
+              <form onSubmit={handleSubmit} className="flex gap-3">
+                {/* ファイル添付ボタン */}
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => chatFileInputRef.current?.click()}
+                  disabled={isSubmitting}
+                  className="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 p-4 rounded-xl transition-all disabled:opacity-50"
+                  title="ファイルを添付（画像・Excel・CSV・PDF）"
+                >
+                  <Paperclip size={20} />
+                </motion.button>
+
+                <div className="flex-1 relative">
+                  <Search size={20} className="absolute left-4 top-4 text-gray-400" />
+                  <textarea
+                    value={inputValue}
+                    onChange={(e) => {
+                      setInputValue(e.target.value);
+                      // 自動高さ調整
+                      const textarea = e.target;
+                      textarea.style.height = 'auto';
+                      const newHeight = Math.min(textarea.scrollHeight, 128);
+                      textarea.style.height = `${newHeight}px`;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (e.ctrlKey || e.shiftKey) {
+                          // Ctrl+Enter or Shift+Enter: 改行を許可
+                          return;
+                        } else {
+                          // Enter only: 送信
+                          e.preventDefault();
+                          if ((inputValue.trim() || attachedFiles.length > 0) && !isSubmitting) {
+                            handleSubmit(e as unknown as React.FormEvent);
+                          }
+                        }
+                      }
+                    }}
+                    onPaste={handlePaste}
+                    placeholder={attachedFiles.length > 0 ? "添付ファイルについて質問..." : "タスクを入力（Ctrl+Enterで改行）"}
+                    disabled={isSubmitting}
+                    rows={1}
+                    style={{ minHeight: '56px' }}
+                    className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 text-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all disabled:opacity-50 resize-none overflow-y-auto"
+                  />
+                </div>
+                <motion.button
+                  type="submit"
+                  disabled={isSubmitting || (!inputValue.trim() && attachedFiles.length === 0)}
+                  whileHover={!isSubmitting ? { scale: 1.02 } : {}}
+                  whileTap={!isSubmitting ? { scale: 0.98 } : {}}
+                  animate={isSubmitting ? { boxShadow: ['0 0 0 0 rgba(168, 85, 247, 0)', '0 0 20px 10px rgba(168, 85, 247, 0.4)', '0 0 0 0 rgba(168, 85, 247, 0)'] } : {}}
+                  transition={isSubmitting ? { duration: 0.8, repeat: Infinity } : {}}
+                  className="bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-600 hover:to-pink-600 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold px-8 py-4 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-fuchsia-500/30 min-w-[140px] justify-center"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 size={20} className="animate-spin" />
+                      実行中...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={20} />
+                      依頼
+                    </>
+                  )}
+                </motion.button>
+              </form>
             </div>
           )}
 
@@ -1716,14 +1836,36 @@ export default function DashboardPage() {
               {/* プロジェクト入力フォーム */}
               <form onSubmit={handleCreateProjectPlan} className="flex gap-3">
                 <div className="flex-1 relative">
-                  <Rocket size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-purple-500" />
-                  <input
-                    type="text"
+                  <Rocket size={20} className="absolute left-4 top-4 text-purple-500" />
+                  <textarea
                     value={projectGoal}
-                    onChange={(e) => setProjectGoal(e.target.value)}
-                    placeholder="作りたいものや目的を入力してください（例: クライアントのPDFを元に、提案資料を作成して）"
+                    onChange={(e) => {
+                      setProjectGoal(e.target.value);
+                      // 自動高さ調整
+                      const textarea = e.target;
+                      textarea.style.height = 'auto';
+                      const newHeight = Math.min(textarea.scrollHeight, 128);
+                      textarea.style.height = `${newHeight}px`;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (e.ctrlKey || e.shiftKey) {
+                          // Ctrl+Enter or Shift+Enter: 改行を許可
+                          return;
+                        } else {
+                          // Enter only: 送信
+                          e.preventDefault();
+                          if (projectGoal.trim() && !isLoadingProjectPlan && partner) {
+                            handleCreateProjectPlan(e as unknown as React.FormEvent);
+                          }
+                        }
+                      }
+                    }}
+                    placeholder="作りたいものや目的を入力してください（Ctrl+Enterで改行）"
                     disabled={isLoadingProjectPlan || !partner}
-                    className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-purple-300 dark:border-purple-600 bg-purple-50 dark:bg-purple-900/20 text-gray-800 dark:text-gray-100 text-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all disabled:opacity-50"
+                    rows={1}
+                    style={{ minHeight: '56px' }}
+                    className="w-full pl-12 pr-4 py-4 rounded-xl border-2 border-purple-300 dark:border-purple-600 bg-purple-50 dark:bg-purple-900/20 text-gray-800 dark:text-gray-100 text-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all disabled:opacity-50 resize-none overflow-y-auto"
                   />
                 </div>
                 <motion.button

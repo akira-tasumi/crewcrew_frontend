@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, X, Loader2 } from 'lucide-react';
+import { Plus, X, Loader2, Coins } from 'lucide-react';
 import CrewCard, { Crew, Skills } from '@/components/CrewCard';
 import CrewDetailModal from '@/components/CrewDetailModal';
 import CrewLogModal from '@/components/CrewLogModal';
@@ -773,6 +773,10 @@ export default function CrewsPage() {
           >
             <Plus size={18} />
             新しいクルーを追加
+            <span className="flex items-center gap-1 bg-white/20 rounded-lg px-2 py-0.5 text-sm">
+              <Coins size={14} className="text-yellow-300" />
+              500
+            </span>
           </motion.button>
         </motion.div>
 

@@ -9,12 +9,14 @@ import {
   Plug,
   ScrollText,
   Building2,
+  ShoppingBag,
 } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/office', label: 'Office', icon: Building2 },
   { href: '/crews', label: 'My Crews', icon: Users },
+  { href: '/shop', label: 'Shop', icon: ShoppingBag },
   { href: '/projects', label: 'Projects', icon: FolderKanban },
   { href: '/settings', label: 'Integration', icon: Plug },
   { href: '/logs', label: 'Log', icon: ScrollText },

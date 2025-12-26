@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Rocket, Users, Zap, ChevronRight, Star } from 'lucide-react';
+import { Sparkles, Rocket, Users, Zap, ChevronRight, Star, Lock, User, AlertCircle } from 'lucide-react';
 import { useUser } from '@/contexts/UserContext';
 import { useRouter } from 'next/navigation';
 
@@ -59,10 +59,13 @@ function FeatureCard({ icon: Icon, title, description, delay }: {
 }
 
 export default function LoginPage() {
-  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const { login, isLoggedIn, isLoading } = useUser();
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const { loginWithCredentials, isLoggedIn, isLoading } = useUser();
   const router = useRouter();
 
   // すでにログイン済みならリダイレクト
@@ -80,14 +83,20 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || isSubmitting) return;
+    if (!username.trim() || !password.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setError(null);
+    setSuccessMessage(null);
 
-    // 演出のため少し待機
-    await new Promise(resolve => setTimeout(resolve, 800));
+    const result = await loginWithCredentials(username.trim(), password);
 
-    login(name.trim());
+    if (result.success) {
+      setSuccessMessage(result.message);
+    } else {
+      setError(result.message);
+      setIsSubmitting(false);
+    }
   };
 
   if (isLoading) {
@@ -143,30 +152,76 @@ export default function LoginPage() {
               transition={{ duration: 0.4 }}
               className="bg-white/10 backdrop-blur-xl rounded-3xl p-8 border border-white/20 shadow-2xl"
             >
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {/* エラーメッセージ */}
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-2 p-3 bg-red-500/20 border border-red-500/50 rounded-xl text-red-300 text-sm"
+                  >
+                    <AlertCircle size={18} />
+                    <span>{error}</span>
+                  </motion.div>
+                )}
+
+                {/* 成功メッセージ */}
+                {successMessage && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-2 p-3 bg-green-500/20 border border-green-500/50 rounded-xl text-green-300 text-sm"
+                  >
+                    <Sparkles size={18} />
+                    <span>{successMessage}</span>
+                  </motion.div>
+                )}
+
+                {/* ユーザーID */}
                 <div>
                   <label className="block text-purple-200 text-sm font-medium mb-2">
-                    あなたの名前を教えてください
+                    ユーザーID
                   </label>
                   <div className="relative">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-purple-300/50">
+                      <User size={20} />
+                    </div>
                     <input
                       type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="ニックネームを入力..."
-                      maxLength={20}
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="ユーザーIDを入力..."
+                      maxLength={50}
                       disabled={isSubmitting}
-                      className="w-full px-5 py-4 bg-white/10 border-2 border-purple-400/50 rounded-xl text-white placeholder-purple-300/50 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 transition-all disabled:opacity-50"
+                      className="w-full pl-12 pr-5 py-4 bg-white/10 border-2 border-purple-400/50 rounded-xl text-white placeholder-purple-300/50 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 transition-all disabled:opacity-50"
                     />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-purple-300/50 text-sm">
-                      {name.length}/20
+                  </div>
+                </div>
+
+                {/* パスワード */}
+                <div>
+                  <label className="block text-purple-200 text-sm font-medium mb-2">
+                    パスワード
+                  </label>
+                  <div className="relative">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-purple-300/50">
+                      <Lock size={20} />
                     </div>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="パスワードを入力..."
+                      maxLength={100}
+                      disabled={isSubmitting}
+                      className="w-full pl-12 pr-5 py-4 bg-white/10 border-2 border-purple-400/50 rounded-xl text-white placeholder-purple-300/50 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 transition-all disabled:opacity-50"
+                    />
                   </div>
                 </div>
 
                 <motion.button
                   type="submit"
-                  disabled={!name.trim() || isSubmitting}
+                  disabled={!username.trim() || !password.trim() || isSubmitting}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   className="w-full py-4 bg-gradient-to-r from-purple-500 via-pink-500 to-orange-500 hover:from-purple-600 hover:via-pink-600 hover:to-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-lg rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 group"
@@ -178,32 +233,39 @@ export default function LoginPage() {
                         transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                         className="w-6 h-6 border-3 border-white border-t-transparent rounded-full"
                       />
-                      <span>準備中...</span>
+                      <span>ログイン中...</span>
                     </>
                   ) : (
                     <>
                       <Rocket size={24} />
-                      <span>冒険を始める</span>
+                      <span>ログイン</span>
                       <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
                     </>
                   )}
                 </motion.button>
               </form>
 
-              {/* スターター特典 */}
+              {/* テストアカウント情報 */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.3 }}
-                className="mt-6 p-4 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-xl border border-yellow-400/30"
+                className="mt-6 p-4 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl border border-blue-400/30"
               >
-                <div className="flex items-center gap-2 mb-2">
-                  <Star size={18} className="text-yellow-400" />
-                  <span className="text-yellow-300 font-bold text-sm">スターター特典</span>
+                <div className="flex items-center gap-2 mb-3">
+                  <Star size={18} className="text-blue-400" />
+                  <span className="text-blue-300 font-bold text-sm">テストアカウント</span>
                 </div>
-                <p className="text-yellow-200/80 text-sm">
-                  今なら初期ゴールド <span className="font-bold text-yellow-300">1,000G</span> プレゼント！
-                </p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-purple-200">通常テスト:</span>
+                    <span className="font-mono text-white bg-white/10 px-2 py-1 rounded">test / test</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-purple-200">デモ (毎回リセット):</span>
+                    <span className="font-mono text-white bg-white/10 px-2 py-1 rounded">demo / demo</span>
+                  </div>
+                </div>
               </motion.div>
             </motion.div>
           )}

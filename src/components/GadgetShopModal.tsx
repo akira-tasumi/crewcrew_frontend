@@ -1,19 +1,27 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Coins, Zap, Brain, Heart, ShoppingCart } from 'lucide-react';
+import { X, Zap, Brain, Heart, Package, ArrowRightLeft } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAppSound } from '@/contexts/SoundContext';
 import { apiUrl } from '@/lib/api';
 
-type Gadget = {
+type EquippedInfo = {
+  gadget_id: number;
+  crew_id: number;
+  crew_name: string;
+  slot_index: number;
+};
+
+type OwnedGadget = {
   id: number;
   name: string;
   description: string;
   icon: string;
   effect_type: string;
   base_effect_value: number;
-  base_cost: number;
+  equipped_by: EquippedInfo | null;
 };
 
 type Props = {
@@ -22,8 +30,7 @@ type Props = {
   crewId: number;
   crewName: string;
   slotIndex: number;
-  userCoin: number;
-  onEquipped: (newCoin: number) => void;
+  onEquipped: () => void;
 };
 
 // スキルタイプに合わせたエフェクト表示
@@ -45,43 +52,53 @@ export default function GadgetShopModal({
   crewId,
   crewName,
   slotIndex,
-  userCoin,
   onEquipped,
 }: Props) {
-  const [gadgets, setGadgets] = useState<Gadget[]>([]);
+  const [gadgets, setGadgets] = useState<OwnedGadget[]>([]);
   const [loading, setLoading] = useState(false);
-  const [purchasing, setPurchasing] = useState<number | null>(null);
+  const [equipping, setEquipping] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [swapConfirm, setSwapConfirm] = useState<OwnedGadget | null>(null);
   const { playSound } = useAppSound();
 
-  // ガジェット一覧を取得
+  // 所持ガジェット一覧を取得
   useEffect(() => {
     if (!isOpen) return;
 
-    const fetchGadgets = async () => {
+    const fetchOwnedGadgets = async () => {
       setLoading(true);
       try {
-        const res = await fetch(apiUrl('/api/gadgets'));
+        const res = await fetch(apiUrl('/api/shop/my-gadgets'));
         if (res.ok) {
           const data = await res.json();
           setGadgets(data);
         }
       } catch (err) {
-        console.error('Failed to fetch gadgets:', err);
+        console.error('Failed to fetch owned gadgets:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchGadgets();
+    fetchOwnedGadgets();
   }, [isOpen]);
 
-  // ガジェット購入・装備
-  const handlePurchase = async (gadget: Gadget) => {
-    if (userCoin < gadget.base_cost || purchasing) return;
+  // ガジェット装備
+  const handleEquip = async (gadget: OwnedGadget) => {
+    // 他のクルーが装備中の場合、確認ダイアログを表示
+    if (gadget.equipped_by && gadget.equipped_by.crew_id !== crewId) {
+      setSwapConfirm(gadget);
+      return;
+    }
 
-    setPurchasing(gadget.id);
+    await performEquip(gadget);
+  };
+
+  // 実際の装備処理
+  const performEquip = async (gadget: OwnedGadget) => {
+    setEquipping(gadget.id);
     setError(null);
+    setSwapConfirm(null);
 
     try {
       const res = await fetch(apiUrl(`/api/crews/${crewId}/gadgets/equip`), {
@@ -96,24 +113,31 @@ export default function GadgetShopModal({
       const data = await res.json();
 
       if (data.success) {
-        playSound('coin');
         playSound('success');
-        onEquipped(data.new_coin);
+        onEquipped();
         onClose();
       } else {
-        setError(data.error || '購入に失敗しました');
+        setError(data.error || '装備に失敗しました');
         playSound('error');
       }
     } catch (err) {
-      console.error('Failed to purchase gadget:', err);
-      setError('購入に失敗しました');
+      console.error('Failed to equip gadget:', err);
+      setError('装備に失敗しました');
       playSound('error');
     } finally {
-      setPurchasing(null);
+      setEquipping(null);
     }
   };
 
   if (!isOpen) return null;
+
+  // 未装備のガジェットと、別クルーが装備中のガジェットに分ける
+  const availableGadgets = gadgets.filter(
+    (g) => !g.equipped_by || g.equipped_by.crew_id === crewId
+  );
+  const equippedByOthers = gadgets.filter(
+    (g) => g.equipped_by && g.equipped_by.crew_id !== crewId
+  );
 
   return (
     <AnimatePresence>
@@ -135,24 +159,18 @@ export default function GadgetShopModal({
           {/* ヘッダー */}
           <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <ShoppingCart size={24} className="text-white" />
+              <Package size={24} className="text-white" />
               <div>
-                <h3 className="text-lg font-bold text-white">ガジェットショップ</h3>
+                <h3 className="text-lg font-bold text-white">ガジェット選択</h3>
                 <p className="text-white/80 text-sm">{crewName}のスロット{slotIndex + 1}に装備</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1 bg-black/30 px-3 py-1 rounded-full">
-                <Coins size={16} className="text-yellow-400" />
-                <span className="font-bold text-white">{userCoin.toLocaleString()}</span>
-              </div>
-              <button
-                onClick={onClose}
-                className="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-full"
-              >
-                <X size={24} />
-              </button>
-            </div>
+            <button
+              onClick={onClose}
+              className="text-white/80 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-full"
+            >
+              <X size={24} />
+            </button>
           </div>
 
           {/* コンテンツ */}
@@ -175,90 +193,228 @@ export default function GadgetShopModal({
                   className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full"
                 />
               </div>
+            ) : gadgets.length === 0 ? (
+              <div className="text-center py-12">
+                <Package size={48} className="mx-auto text-gray-600 mb-4" />
+                <p className="text-gray-400">所持しているガジェットがありません</p>
+                <p className="text-gray-500 text-sm mt-2">
+                  <Link
+                    href="/shop"
+                    className="text-purple-400 hover:text-purple-300 underline transition-colors"
+                    onClick={onClose}
+                  >
+                    ショップ
+                  </Link>
+                  でガジェットを購入してください
+                </p>
+              </div>
             ) : (
-              <div className="grid gap-3">
-                {gadgets.map((gadget, index) => {
-                  const effectInfo = EFFECT_TYPE_LABELS[gadget.effect_type] || { label: gadget.effect_type, icon: Zap, color: '#8B5CF6' };
-                  const Icon = effectInfo.icon;
-                  const canAfford = userCoin >= gadget.base_cost;
-                  const isPurchasing = purchasing === gadget.id;
+              <div className="space-y-4">
+                {/* 装備可能なガジェット */}
+                {availableGadgets.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-400 mb-2">装備可能</h4>
+                    <div className="grid gap-3">
+                      {availableGadgets.map((gadget, index) => (
+                        <GadgetCard
+                          key={gadget.id}
+                          gadget={gadget}
+                          index={index}
+                          isEquipping={equipping === gadget.id}
+                          isEquippedByThis={gadget.equipped_by?.crew_id === crewId}
+                          onEquip={() => handleEquip(gadget)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-                  return (
-                    <motion.div
-                      key={gadget.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      className={`bg-black/40 rounded-xl p-4 border transition-all ${
-                        canAfford
-                          ? 'border-white/10 hover:border-purple-500/50 cursor-pointer'
-                          : 'border-red-500/20 opacity-60'
-                      }`}
-                      onClick={() => canAfford && handlePurchase(gadget)}
-                    >
-                      <div className="flex items-center gap-4">
-                        {/* アイコン */}
-                        <div
-                          className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl"
-                          style={{
-                            background: `linear-gradient(135deg, ${effectInfo.color}40, ${effectInfo.color}20)`,
-                            border: `2px solid ${effectInfo.color}60`,
-                          }}
-                        >
-                          {gadget.icon}
-                        </div>
-
-                        {/* 情報 */}
-                        <div className="flex-1">
-                          <h4 className="font-bold text-white mb-1">{gadget.name}</h4>
-                          <p className="text-gray-400 text-sm mb-2">{gadget.description}</p>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="text-xs px-2 py-0.5 rounded-full font-bold flex items-center gap-1"
-                              style={{
-                                background: `${effectInfo.color}30`,
-                                color: effectInfo.color,
-                              }}
-                            >
-                              <Icon size={12} />
-                              {effectInfo.label} +{gadget.base_effect_value}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* 価格・購入ボタン */}
-                        <motion.button
-                          whileHover={canAfford ? { scale: 1.05 } : {}}
-                          whileTap={canAfford ? { scale: 0.95 } : {}}
-                          disabled={!canAfford || isPurchasing}
-                          className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${
-                            canAfford
-                              ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-yellow-900 hover:shadow-lg hover:shadow-yellow-500/30'
-                              : 'bg-gray-700 text-gray-400'
-                          }`}
-                        >
-                          {isPurchasing ? (
-                            <motion.div
-                              animate={{ rotate: 360 }}
-                              transition={{ duration: 0.5, repeat: Infinity, ease: 'linear' }}
-                              className="w-4 h-4 border-2 border-current border-t-transparent rounded-full"
-                            />
-                          ) : (
-                            <>
-                              <Coins size={16} />
-                              {gadget.base_cost}
-                            </>
-                          )}
-                        </motion.button>
-                      </div>
-                    </motion.div>
-                  );
-                })}
+                {/* 他クルーが装備中のガジェット */}
+                {equippedByOthers.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-400 mb-2">他のクルーが装備中</h4>
+                    <div className="grid gap-3">
+                      {equippedByOthers.map((gadget, index) => (
+                        <GadgetCard
+                          key={gadget.id}
+                          gadget={gadget}
+                          index={index + availableGadgets.length}
+                          isEquipping={equipping === gadget.id}
+                          isEquippedByOther={true}
+                          onEquip={() => handleEquip(gadget)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </motion.div>
+
+        {/* 交換確認ダイアログ */}
+        <AnimatePresence>
+          {swapConfirm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4"
+              onClick={() => setSwapConfirm(null)}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="bg-gray-800 rounded-2xl p-6 max-w-sm w-full border border-white/10"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                    <ArrowRightLeft size={24} className="text-orange-400" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white">ガジェット交換</h4>
+                    <p className="text-gray-400 text-sm">{swapConfirm.name}</p>
+                  </div>
+                </div>
+
+                <p className="text-gray-300 mb-6">
+                  <span className="text-purple-400 font-bold">{swapConfirm.equipped_by?.crew_name}</span>
+                  が装備中です。交換しますか？
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setSwapConfirm(null)}
+                    className="flex-1 px-4 py-2 rounded-xl bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={() => performEquip(swapConfirm)}
+                    disabled={equipping === swapConfirm.id}
+                    className="flex-1 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold hover:shadow-lg hover:shadow-purple-500/30 transition-all"
+                  >
+                    {equipping === swapConfirm.id ? (
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 0.5, repeat: Infinity, ease: 'linear' }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full mx-auto"
+                      />
+                    ) : (
+                      '交換する'
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+// ガジェットカードコンポーネント
+function GadgetCard({
+  gadget,
+  index,
+  isEquipping,
+  isEquippedByThis,
+  isEquippedByOther,
+  onEquip,
+}: {
+  gadget: OwnedGadget;
+  index: number;
+  isEquipping: boolean;
+  isEquippedByThis?: boolean;
+  isEquippedByOther?: boolean;
+  onEquip: () => void;
+}) {
+  const effectInfo = EFFECT_TYPE_LABELS[gadget.effect_type] || { label: gadget.effect_type, icon: Zap, color: '#8B5CF6' };
+  const Icon = effectInfo.icon;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.05 }}
+      className={`bg-black/40 rounded-xl p-4 border transition-all ${
+        isEquippedByOther
+          ? 'border-orange-500/30 opacity-70 hover:opacity-100 cursor-pointer hover:border-orange-500/50'
+          : isEquippedByThis
+          ? 'border-green-500/30 opacity-60'
+          : 'border-white/10 hover:border-purple-500/50 cursor-pointer'
+      }`}
+      onClick={() => !isEquippedByThis && onEquip()}
+    >
+      <div className="flex items-center gap-4">
+        {/* アイコン */}
+        <div
+          className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl"
+          style={{
+            background: `linear-gradient(135deg, ${effectInfo.color}40, ${effectInfo.color}20)`,
+            border: `2px solid ${effectInfo.color}60`,
+          }}
+        >
+          {gadget.icon}
+        </div>
+
+        {/* 情報 */}
+        <div className="flex-1">
+          <h4 className="font-bold text-white mb-1">{gadget.name}</h4>
+          <p className="text-gray-400 text-sm mb-2">{gadget.description}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="text-xs px-2 py-0.5 rounded-full font-bold flex items-center gap-1"
+              style={{
+                background: `${effectInfo.color}30`,
+                color: effectInfo.color,
+              }}
+            >
+              <Icon size={12} />
+              {effectInfo.label} +{gadget.base_effect_value}
+            </span>
+            {isEquippedByOther && gadget.equipped_by && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">
+                {gadget.equipped_by.crew_name}が装備中
+              </span>
+            )}
+            {isEquippedByThis && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
+                装備中
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ボタン */}
+        {!isEquippedByThis && (
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            disabled={isEquipping}
+            className={`px-4 py-2 rounded-xl font-bold transition-all ${
+              isEquippedByOther
+                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white'
+                : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+            }`}
+          >
+            {isEquipping ? (
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 0.5, repeat: Infinity, ease: 'linear' }}
+                className="w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+              />
+            ) : isEquippedByOther ? (
+              '交換'
+            ) : (
+              '装備'
+            )}
+          </motion.button>
+        )}
+      </div>
+    </motion.div>
   );
 }
