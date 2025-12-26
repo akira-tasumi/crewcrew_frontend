@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import CrewImage from '@/components/CrewImage';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -81,6 +82,9 @@ type ExecuteTaskResponse = {
   // ルビー報酬
   ruby_gained: number | null;
   new_ruby: number | null;
+  // スライド生成結果
+  slide_url: string | null;
+  slide_id: string | null;
 };
 
 type ScoutResponse = {
@@ -567,6 +571,9 @@ export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [partner, setPartner] = useState<Partner | null>(null);
 
+  // Google認証セッション（スライド生成用）
+  const { data: session } = useSession();
+
   // サウンド
   const { playSound } = useAppSound();
 
@@ -985,6 +992,10 @@ export default function DashboardPage() {
       formData.append('required_inputs_json', JSON.stringify(projectPlan.required_inputs));
       formData.append('tasks_json', JSON.stringify(projectPlan.tasks));
       formData.append('input_values_json', JSON.stringify(projectInputValues));
+      // Google認証済みの場合はアクセストークンを追加（スライド生成用）
+      if (session?.accessToken) {
+        formData.append('google_access_token', session.accessToken);
+      }
 
       // ファイルを追加（キー名:::ファイル名 形式）
       for (const [key, file] of Object.entries(projectInputFiles)) {
@@ -1113,7 +1124,7 @@ export default function DashboardPage() {
     setTasks((prev) => [newTask, ...prev]);
 
     try {
-      // APIを呼び出し
+      // APIを呼び出し（Google認証済みの場合はアクセストークンも送信）
       const response = await fetch(apiUrl('/api/execute-task'), {
         method: 'POST',
         headers: {
@@ -1122,6 +1133,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           crew_id: crew.id,
           task: taskText,
+          google_access_token: session?.accessToken || null,
         }),
       });
 

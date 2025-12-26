@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, X, ExternalLink, Loader2 } from 'lucide-react';
+import { Check, X, ExternalLink, Loader2, Slack } from 'lucide-react';
 import { signIn, signOut, useSession } from 'next-auth/react';
 
 type Integration = {
@@ -18,7 +18,7 @@ const DUMMY_INTEGRATIONS: Integration[] = [
     name: 'Slack',
     description: 'チームコミュニケーションツールと連携',
     icon: '/images/integrations/slack.png',
-    connected: true,
+    connected: false, // 実際の認証状態を使用
   },
   {
     id: 'notion',
@@ -48,8 +48,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const { data: session, status: sessionStatus } = useSession();
 
-  // Google連携状態を反映
+  // 連携状態を反映
   const isGoogleConnected = !!session?.accessToken;
+  const isSlackConnected = !!session?.slackAccessToken;
 
   useEffect(() => {
     // TODO: FastAPI から取得
@@ -67,6 +68,16 @@ export default function SettingsPage() {
         signOut({ redirect: false });
       } else {
         signIn('google');
+      }
+      return;
+    }
+
+    // Slackの場合は実際の認証を使用
+    if (id === 'slack') {
+      if (isSlackConnected) {
+        signOut({ redirect: false });
+      } else {
+        signIn('slack');
       }
       return;
     }
@@ -97,11 +108,13 @@ export default function SettingsPage() {
       ) : (
         <div className="space-y-4">
           {integrations.map((integration) => {
-            // Google Workspaceは実際の認証状態を使用
+            // Google/Slackは実際の認証状態を使用
             const isConnected = integration.id === 'google'
               ? isGoogleConnected
+              : integration.id === 'slack'
+              ? isSlackConnected
               : integration.connected;
-            const isGoogleLoading = integration.id === 'google' && sessionStatus === 'loading';
+            const isAuthLoading = (integration.id === 'google' || integration.id === 'slack') && sessionStatus === 'loading';
 
             return (
               <div
@@ -109,7 +122,7 @@ export default function SettingsPage() {
                 className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 flex items-center gap-6"
               >
                 <div className="w-14 h-14 bg-gray-100 dark:bg-gray-700 rounded-xl flex items-center justify-center text-2xl">
-                  {integration.id === 'slack' && '💬'}
+                  {integration.id === 'slack' && <Slack className="w-8 h-8 text-[#4A154B]" />}
                   {integration.id === 'notion' && '📝'}
                   {integration.id === 'google' && (
                     <svg className="w-8 h-8" viewBox="0 0 24 24">
@@ -147,7 +160,7 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="flex items-center gap-4">
-                  {isGoogleLoading ? (
+                  {isAuthLoading ? (
                     <Loader2 size={20} className="animate-spin text-gray-400" />
                   ) : (
                     <>
