@@ -1,13 +1,15 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Crown, Lock, Zap, Coins, Star, Plus, Target } from 'lucide-react';
+import { X, Crown, Lock, Zap, Coins, Star, Plus, Target, DoorOpen } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import type { Crew } from './CrewCard';
 import confetti from 'canvas-confetti';
 import GadgetShopModal from './GadgetShopModal';
 import GadgetUpgradeModal, { type EquippedGadget } from './GadgetUpgradeModal';
+import FarewellModal, { calculateFarewellCoin } from './FarewellModal';
 import { useAppSound } from '@/contexts/SoundContext';
+import { useUser } from '@/contexts/UserContext';
 import { apiUrl } from '@/lib/api';
 import CrewImage from './CrewImage';
 
@@ -58,6 +60,7 @@ type CrewDetailModalProps = {
   userCoin?: number; // ユーザーのコイン残高
   onCrewEvolved?: (evolvedCrew: Crew) => void; // 進化完了時のコールバック
   onCoinUpdated?: (newCoin: number) => void; // コイン更新時のコールバック
+  onFarewell?: (crew: Crew, coinReward: number) => void; // 独立時のコールバック
 };
 
 // 役割に応じた色テーマ
@@ -160,6 +163,7 @@ export default function CrewDetailModal({
   userCoin = 0,
   onCrewEvolved,
   onCoinUpdated,
+  onFarewell,
 }: CrewDetailModalProps) {
   const [showUpgradeEffect, setShowUpgradeEffect] = useState(false);
   const [evolutionPhase, setEvolutionPhase] = useState<EvolutionPhase>('idle');
@@ -173,13 +177,19 @@ export default function CrewDetailModal({
   const [showGadgetUpgrade, setShowGadgetUpgrade] = useState(false);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number>(0);
   const [selectedGadgetForUpgrade, setSelectedGadgetForUpgrade] = useState<EquippedGadget | null>(null);
-  const [localCoin, setLocalCoin] = useState(userCoin);
   const { playSound } = useAppSound();
+
+  // UserContextからグローバルなコイン情報を取得
+  const { apiUser, updateCoin } = useUser();
+  const localCoin = apiUser?.coin ?? userCoin;
 
   // スキル関連state
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+
+  // 独立モーダル
+  const [showFarewellModal, setShowFarewellModal] = useState(false);
 
   // 現在表示すべきクルー画像（進化後は新しい画像）
   const displayCrew = evolvedCrewData || crew;
@@ -215,11 +225,6 @@ export default function CrewDetailModal({
       });
     }, 250);
   }, []);
-
-  // コイン同期
-  useEffect(() => {
-    setLocalCoin(userCoin);
-  }, [userCoin]);
 
   // 装備中ガジェットを取得
   const fetchEquippedGadgets = useCallback(async () => {
@@ -278,6 +283,7 @@ export default function CrewDetailModal({
       setShowGadgetUpgrade(false);
       setSelectedGadgetForUpgrade(null);
       setSkills([]);
+      setShowFarewellModal(false);
     }
   }, [isOpen]);
 
@@ -310,8 +316,8 @@ export default function CrewDetailModal({
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          // コインを更新
-          setLocalCoin(data.new_coin);
+          // コインを更新（グローバルに反映）
+          updateCoin(data.new_coin);
           onCoinUpdated?.(data.new_coin);
 
           // スキルを再取得して表示を更新
@@ -884,6 +890,30 @@ export default function CrewDetailModal({
                 </div>
               </div>
 
+              {/* 独立ボタン（相棒以外のみ表示） */}
+              {(evolutionPhase === 'idle' || evolutionPhase === 'complete') && !crew.is_partner && onFarewell && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.6 }}
+                  className="mt-2 pt-3 border-t border-white/10"
+                >
+                  <button
+                    onClick={() => {
+                      playSound('click');
+                      setShowFarewellModal(true);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 text-orange-300 hover:text-orange-200 transition-all text-sm"
+                  >
+                    <DoorOpen size={16} />
+                    <span>独立させる</span>
+                    <span className="text-xs opacity-70">
+                      (+{calculateFarewellCoin(crew).toLocaleString()}G)
+                    </span>
+                  </button>
+                </motion.div>
+              )}
+
               {/* エラーメッセージ */}
               {evolutionError && (
                 <motion.div
@@ -1009,7 +1039,8 @@ export default function CrewDetailModal({
         slotIndex={selectedSlotIndex}
         userCoin={localCoin}
         onEquipped={(newCoin) => {
-          setLocalCoin(newCoin);
+          // コインをグローバルに更新
+          updateCoin(newCoin);
           onCoinUpdated?.(newCoin);
           fetchEquippedGadgets();
         }}
@@ -1025,12 +1056,25 @@ export default function CrewDetailModal({
         gadget={selectedGadgetForUpgrade}
         userCoin={localCoin}
         onUpgraded={(newCoin, upgradedGadget) => {
-          setLocalCoin(newCoin);
+          // コインをグローバルに更新
+          updateCoin(newCoin);
           onCoinUpdated?.(newCoin);
           setEquippedGadgets(prev =>
             prev.map(g => g.id === upgradedGadget.id ? upgradedGadget : g)
           );
           setSelectedGadgetForUpgrade(upgradedGadget);
+        }}
+      />
+
+      {/* 独立モーダル */}
+      <FarewellModal
+        isOpen={showFarewellModal}
+        onClose={() => setShowFarewellModal(false)}
+        crew={crew}
+        onConfirm={(coinReward) => {
+          setShowFarewellModal(false);
+          onFarewell?.(crew, coinReward);
+          onClose();
         }}
       />
     </AnimatePresence>

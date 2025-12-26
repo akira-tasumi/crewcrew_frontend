@@ -147,7 +147,8 @@ type MapCanvasProps = {
 };
 
 // Lerp補間係数（0〜1、大きいほど素早く追従）
-const LERP_FACTOR = 0.12;
+// 移動速度（0.12→0.02でゆっくり移動）
+const LERP_FACTOR = 0.02;
 
 /**
  * 線形補間（Lerp）
@@ -2101,6 +2102,7 @@ export default function MapCanvas({
 
   /**
    * クルーを描画（呼吸アニメーション + Lerp補間座標使用）
+   * 円形の囲みなし - 床に直接立っている表現
    */
   const drawCrew = useCallback((
     ctx: CanvasRenderingContext2D,
@@ -2121,73 +2123,61 @@ export default function MapCanvas({
     currentPos.x = lerp(currentPos.x, targetX, LERP_FACTOR);
     currentPos.y = lerp(currentPos.y, targetY, LERP_FACTOR);
 
-    const breathOffset = Math.sin(time * 0.004 + crew.id * 0.5) * 2;
+    const breathOffset = Math.sin(time * 0.004 + crew.id * 0.5) * 1.5;
 
     const px = currentPos.x;
     const py = currentPos.y + breathOffset;
-    const size = TILE_SIZE - 6;
+    const size = TILE_SIZE - 2;
     const centerX = px + TILE_SIZE / 2;
     const centerY = py + TILE_SIZE / 2;
 
+    // 選択時のハイライト（地面に光の輪）
     if (isSelected) {
-      ctx.fillStyle = 'rgba(155, 89, 182, 0.3)';
+      ctx.fillStyle = 'rgba(155, 89, 182, 0.25)';
       ctx.beginPath();
-      ctx.arc(centerX, centerY, TILE_SIZE / 2 + 4, 0, Math.PI * 2);
+      ctx.ellipse(centerX, py + TILE_SIZE - 2, size / 2, 5, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      const pulseSize = TILE_SIZE / 2 + 4 + Math.sin(time * 0.01) * 3;
-      ctx.strokeStyle = 'rgba(155, 89, 182, 0.5)';
+      const pulseSize = size / 2 + Math.sin(time * 0.01) * 2;
+      ctx.strokeStyle = 'rgba(155, 89, 182, 0.4)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(centerX, centerY, pulseSize, 0, Math.PI * 2);
+      ctx.ellipse(centerX, py + TILE_SIZE - 2, pulseSize, 6, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
 
-    // 影
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+    // 足元の影（楕円形、薄い）
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
     ctx.beginPath();
-    ctx.ellipse(px + TILE_SIZE / 2, py + TILE_SIZE - 2, size / 2 - 2, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(centerX, py + TILE_SIZE - 2, size / 2 - 4, 3, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // クルー本体
-    const gradient = ctx.createRadialGradient(
-      centerX - 3, centerY - 3, 0,
-      centerX, centerY, size / 2
-    );
-    gradient.addColorStop(0, '#FFFFFF');
-    gradient.addColorStop(1, crew.isPartner ? '#FEF3C7' : '#EDE9FE');
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = crew.isPartner ? PASTEL_COLORS.partnerBorder : PASTEL_COLORS.crewBorder;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-    ctx.stroke();
-
+    // クルー画像を直接描画（円形の囲みなし）
     const img = crewImagesRef.current.get(crew.id);
     if (img && img.complete) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, size / 2 - 2, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(img, px + 4, py + 2, size - 2, size - 2);
-      ctx.restore();
+      // 画像を少し大きめに描画して存在感を出す
+      const imgSize = size + 4;
+      const imgX = px + (TILE_SIZE - imgSize) / 2;
+      const imgY = py + (TILE_SIZE - imgSize) / 2 - 4; // 少し上にオフセット
+      ctx.drawImage(img, imgX, imgY, imgSize, imgSize);
     } else {
-      ctx.fillStyle = '#6B7280';
-      ctx.font = 'bold 12px sans-serif';
+      // 画像がない場合のフォールバック（透明な丸に文字）
+      ctx.fillStyle = 'rgba(107, 114, 128, 0.7)';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY - 2, size / 2 - 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(crew.name.charAt(0), centerX, centerY);
+      ctx.fillText(crew.name.charAt(0), centerX, centerY - 2);
     }
 
+    // 相棒の王冠アイコン
     if (crew.isPartner) {
-      ctx.font = '10px sans-serif';
+      ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('👑', centerX, py - 2);
+      ctx.fillText('👑', centerX, py - 4);
     }
 
     // 状態バルーン
@@ -2203,10 +2193,10 @@ export default function MapCanvas({
     const emoji = statusEmoji[crew.status] || '💭';
 
     const bubbleOffset = Math.sin(time * 0.003 + crew.id) * 1;
-    const bubbleX = centerX + 10;
-    const bubbleY = py - 6 + bubbleOffset;
+    const bubbleX = centerX + 12;
+    const bubbleY = py - 4 + bubbleOffset;
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
     ctx.beginPath();
     ctx.roundRect(bubbleX - 8, bubbleY - 8, 16, 16, 4);
     ctx.fill();
@@ -2218,17 +2208,12 @@ export default function MapCanvas({
     ctx.closePath();
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(bubbleX - 8, bubbleY - 8, 16, 16, 4);
-    ctx.stroke();
-
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(emoji, bubbleX, bubbleY);
 
+    // ステータスインジケーター（右下に小さく）
     const statusColor = {
       working: PASTEL_COLORS.statusWorking,
       generating: PASTEL_COLORS.statusGenerating,
@@ -2240,13 +2225,13 @@ export default function MapCanvas({
 
     ctx.fillStyle = statusColor;
     ctx.beginPath();
-    ctx.arc(px + TILE_SIZE - 6, py + TILE_SIZE - 6 - breathOffset, 4, 0, Math.PI * 2);
+    ctx.arc(px + TILE_SIZE - 4, py + TILE_SIZE - 8, 3, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(px + TILE_SIZE - 6, py + TILE_SIZE - 6 - breathOffset, 4, 0, Math.PI * 2);
+    ctx.arc(px + TILE_SIZE - 4, py + TILE_SIZE - 8, 3, 0, Math.PI * 2);
     ctx.stroke();
   }, []);
 

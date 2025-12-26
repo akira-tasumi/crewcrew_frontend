@@ -34,7 +34,9 @@ import { emitCrewExpUpdate } from '@/lib/crewEvents';
 import LevelUpNotification from '@/components/LevelUpNotification';
 import DailyReportModal from '@/components/DailyReportModal';
 import CollaborationDemo from '@/components/CollaborationDemo';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { useAppSound } from '@/contexts/SoundContext';
+import { useUser } from '@/contexts/UserContext';
 import { apiUrl } from '@/lib/api';
 
 type Task = {
@@ -79,15 +81,6 @@ type ExecuteTaskResponse = {
   // ルビー報酬
   ruby_gained: number | null;
   new_ruby: number | null;
-};
-
-type RouteTaskResponse = {
-  success: boolean;
-  selected_crew_id: number;
-  selected_crew_name: string;
-  partner_comment: string;
-  partner_name: string;
-  error: string | null;
 };
 
 type ScoutResponse = {
@@ -256,24 +249,7 @@ function getTextColorForTime(timeOfDay: string): string {
   return timeOfDay === 'night' ? 'text-white' : 'text-gray-800';
 }
 
-const DUMMY_TASKS: Task[] = [
-  {
-    id: 1,
-    title: 'メール返信の下書き作成',
-    status: 'completed',
-    crewId: 1,
-    crewName: 'フレイミー',
-    crewImage: '/images/crews/monster_1.png',
-  },
-  {
-    id: 2,
-    title: '週次レポートの集計',
-    status: 'completed',
-    crewId: 2,
-    crewName: 'アクアン',
-    crewImage: '/images/crews/monster_2.png',
-  },
-];
+const DUMMY_TASKS: Task[] = [];
 
 // クルーのミニアイコンコンポーネント
 function CrewMiniIcon({ image, name, isWorking }: { image: string; name: string; isWorking?: boolean }) {
@@ -594,9 +570,8 @@ export default function DashboardPage() {
   // サウンド
   const { playSound } = useAppSound();
 
-  // マネージャー機能
-  const [isRouting, setIsRouting] = useState(false);
-  const [partnerComment, setPartnerComment] = useState<string | null>(null);
+  // UserContextからグローバルなユーザー情報管理を取得
+  const { refreshApiUser } = useUser();
 
   // スカウト機能
   const [isScouting, setIsScouting] = useState(false);
@@ -979,7 +954,7 @@ export default function DashboardPage() {
     }
   };
 
-  // Director Mode: プロジェクト開始・実行
+  // Director Mode: プロジェクト開始・実行（SSEストリーミング）
   const handleStartProject = async () => {
     if (!projectPlan) return;
 
@@ -1012,8 +987,6 @@ export default function DashboardPage() {
       formData.append('input_values_json', JSON.stringify(projectInputValues));
 
       // ファイルを追加（キー名:::ファイル名 形式）
-      // Note: globalThis.File を使用（lucide-reactのFileアイコンとの衝突を避けるため）
-      // Note: 区切り文字に ::: を使用（キーに _ が含まれる可能性があるため）
       for (const [key, file] of Object.entries(projectInputFiles)) {
         console.log(`Adding file: key=${key}, name=${file.name}, size=${file.size}`);
         const blob = file.slice(0, file.size, file.type);
@@ -1021,23 +994,76 @@ export default function DashboardPage() {
         formData.append('files', renamedFile);
       }
 
-      const response = await fetch(apiUrl('/api/director/execute'), {
+      // SSEストリーミングでタスク進捗を受信
+      const response = await fetch(apiUrl('/api/director/execute-stream'), {
         method: 'POST',
         body: formData,
       });
 
-      const data: ExecuteProjectResponse = await response.json();
+      if (!response.ok) {
+        throw new Error('Failed to start project execution');
+      }
 
-      if (data.success) {
-        // タスク結果をセット
-        setProjectExecutionResults(data.task_results);
-        setCurrentExecutingTaskIndex(-1); // 実行完了
-        setShowProjectComplete(true);
-        playSound('levelup');
-      } else {
-        playSound('error');
-        alert(data.error || 'プロジェクトの実行に失敗しました');
-        setIsProjectExecuting(false);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              switch (data.type) {
+                case 'start':
+                  console.log(`Project started with ${data.total_tasks} tasks`);
+                  break;
+
+                case 'task_start':
+                  // タスク開始時に現在のインデックスを更新
+                  setCurrentExecutingTaskIndex(data.task_index);
+                  playSound('click');
+                  console.log(`Task ${data.task_index} started: ${data.crew_name}`);
+                  break;
+
+                case 'task_complete':
+                  // タスク完了時に結果を追加
+                  setProjectExecutionResults((prev) => [...prev, data.task_result]);
+                  playSound('confirm');
+                  console.log(`Task ${data.task_index} completed: ${data.task_result.crew_name}`);
+                  break;
+
+                case 'complete':
+                  // 全タスク完了
+                  setCurrentExecutingTaskIndex(-1);
+                  setShowProjectComplete(true);
+                  playSound('levelup');
+                  console.log('Project completed!');
+                  break;
+
+                case 'error':
+                  playSound('error');
+                  alert(data.error || 'プロジェクトの実行に失敗しました');
+                  setIsProjectExecuting(false);
+                  break;
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', e);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Execute project error:', error);
@@ -1061,46 +1087,16 @@ export default function DashboardPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isSubmitting || isRouting) return;
+    if (!inputValue.trim() || isSubmitting) return;
+
+    // 選択されたクルーを取得
+    const crew = crews.find((c) => c.id === selectedCrewId);
+    if (!crew) return;
 
     playSound('click'); // 送信音
 
     const taskText = inputValue;
     setInputValue('');
-    setPartnerComment(null);
-
-    // 相棒がいる場合はマネージャー機能を使用
-    if (partner) {
-      setIsRouting(true);
-
-      try {
-        // 相棒にルーティングを依頼
-        const routeResponse = await fetch(apiUrl('/api/route-task'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task: taskText }),
-        });
-        const routeData: RouteTaskResponse = await routeResponse.json();
-
-        if (routeData.success) {
-          // 相棒のコメントを表示
-          setPartnerComment(routeData.partner_comment);
-          // 選ばれたクルーに切り替え
-          setSelectedCrewId(routeData.selected_crew_id);
-
-          // 少し待ってからタスクを実行
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        }
-      } catch (error) {
-        console.error('Routing error:', error);
-      } finally {
-        setIsRouting(false);
-      }
-    }
-
-    // 選択されたクルーを取得（ルーティング後の値を使用）
-    const crew = crews.find((c) => c.id === selectedCrewId);
-    if (!crew) return;
 
     setIsSubmitting(true);
 
@@ -1668,47 +1664,6 @@ export default function DashboardPage() {
           )}
         </motion.div>
 
-        {/* マネージャーコメント表示 */}
-        <AnimatePresence>
-          {(isRouting || partnerComment) && partner && (
-            <motion.div
-              initial={{ opacity: 0, y: -10, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: 'auto' }}
-              exit={{ opacity: 0, y: -10, height: 0 }}
-              className="mb-4 bg-gradient-to-r from-purple-100 to-pink-100 dark:from-purple-900/30 dark:to-pink-900/30 rounded-xl p-3 border border-purple-200 dark:border-purple-700"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-400 bg-gradient-to-br from-purple-100 to-pink-100 shrink-0">
-                  <CrewImage
-                    src={partner.image}
-                    alt={partner.name}
-                    width={40}
-                    height={40}
-                    className="object-cover scale-150 translate-y-1"
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs bg-purple-200 dark:bg-purple-700 text-purple-700 dark:text-purple-200 px-2 py-0.5 rounded-full font-medium">
-                      {partner.name}
-                    </span>
-                  </div>
-                  {isRouting ? (
-                    <div className="flex items-center gap-2 text-purple-600 dark:text-purple-300 text-sm">
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>最適なクルーを選定中...</span>
-                    </div>
-                  ) : (
-                    <p className="text-gray-700 dark:text-gray-200 text-sm truncate">
-                      {partnerComment}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* ===== 中部: タスク進捗 & 相棒コメント ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
           {/* 統計カード（2列） */}
@@ -1930,9 +1885,22 @@ export default function DashboardPage() {
           crewImage={selectedTask?.crewImage || '/images/crews/monster_1.png'}
         />
 
+        {/* スカウト中のローディングオーバーレイ */}
+        <LoadingOverlay
+          isLoading={isScouting && !scoutedCrew}
+          messages={[
+            '優秀な人材を探しています...',
+            'スキルをチェック中...',
+            '履歴書を確認しています...',
+            'AIがキャラクターを生成中...',
+            '個性的なクルーを発見！',
+            'まもなくお披露目です！',
+          ]}
+        />
+
         {/* スカウトモーダル */}
         <AnimatePresence>
-          {showScoutModal && (
+          {showScoutModal && !isScouting && scoutedCrew && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1956,26 +1924,7 @@ export default function DashboardPage() {
                 className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
               >
-                {isScouting && !scoutedCrew ? (
-                  // スカウト中の演出
-                  <div className="p-12 text-center">
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                      className="w-24 h-24 mx-auto mb-6 border-4 border-yellow-400 border-t-transparent rounded-full"
-                    />
-                    <motion.h3
-                      animate={{ opacity: [0.5, 1, 0.5] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                      className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2"
-                    >
-                      スカウト中...
-                    </motion.h3>
-                    <p className="text-gray-500 dark:text-gray-400">
-                      新しいクルーを探しています
-                    </p>
-                  </div>
-                ) : scoutedCrew && !isResumeFlipped ? (
+                {scoutedCrew && !isResumeFlipped ? (
                   // 履歴書（裏向き）- クリックでめくる
                   <motion.div
                     className="p-8 cursor-pointer"
@@ -2209,7 +2158,7 @@ export default function DashboardPage() {
           }}
           report={dailyReport}
           partner={partner}
-          onCoinUpdate={fetchUser}
+          onCoinUpdate={refreshApiUser}
         />
 
         {/* 連携デモモーダル */}
@@ -2513,6 +2462,19 @@ export default function DashboardPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ディレクターモード ローディングオーバーレイ */}
+        <LoadingOverlay
+          isLoading={isLoadingProjectPlan}
+          messages={[
+            'プロジェクトを分析中...',
+            '最適なクルーを選定しています...',
+            'タスクを分解しています...',
+            'スケジュールを調整中...',
+            '担当者を割り当てています...',
+            'プロジェクト計画を作成中...',
+          ]}
+        />
 
         {/* プロジェクト計画確認モーダル */}
         <AnimatePresence>

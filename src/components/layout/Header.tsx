@@ -5,16 +5,9 @@ import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Coins, Gem, Building2, Crown, User, ChevronDown, Moon, Sun, Volume2, VolumeX, Clock } from 'lucide-react';
 import { useAppSound } from '@/contexts/SoundContext';
+import { useUser } from '@/contexts/UserContext';
 import confetti from 'canvas-confetti';
 import { apiUrl } from '@/lib/api';
-
-type User = {
-  id: number;
-  company_name: string;
-  coin: number;
-  ruby: number;
-  rank: string;
-};
 
 function CompanyBadge({ companyName, rank }: { companyName: string; rank: string }) {
   const getRankColor = (rank: string) => {
@@ -341,32 +334,12 @@ function UserProfile() {
 }
 
 export default function Header() {
-  const [user, setUser] = useState<User | null>(null);
+  // UserContextからapiUserを取得（グローバルなコイン/ルビー管理）
+  const { apiUser, refreshApiUser } = useUser();
   const [logoClickCount, setLogoClickCount] = useState(0);
   const [showGodModeToast, setShowGodModeToast] = useState(false);
   const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { playSound } = useAppSound();
-
-  // ユーザー情報を取得
-  const fetchUser = useCallback(async () => {
-    try {
-      const res = await fetch(apiUrl('/api/user'));
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch user:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchUser();
-
-    // 定期的に更新（30秒ごと）
-    const interval = setInterval(fetchUser, 30000);
-    return () => clearInterval(interval);
-  }, [fetchUser]);
 
   // God Mode発動時のconfetti
   const fireGodModeConfetti = useCallback(() => {
@@ -409,13 +382,13 @@ export default function Header() {
         setShowGodModeToast(true);
         setTimeout(() => setShowGodModeToast(false), 4000);
 
-        // ユーザー情報を再取得
-        await fetchUser();
+        // ユーザー情報を再取得（UserContext経由）
+        await refreshApiUser();
       }
     } catch (err) {
       console.error('Failed to activate god mode:', err);
     }
-  }, [playSound, fireGodModeConfetti, fetchUser]);
+  }, [playSound, fireGodModeConfetti, refreshApiUser]);
 
   // ロゴクリックハンドラー
   const handleLogoClick = useCallback(() => {
@@ -481,12 +454,12 @@ export default function Header() {
         </div>
 
         {/* Resource Bar - Center */}
-        {user ? (
+        {apiUser ? (
           <div className="flex items-center gap-6 bg-gray-50 dark:bg-gray-800/50 px-6 py-2 rounded-2xl border border-gray-100 dark:border-gray-700">
-            <CompanyBadge companyName={user.company_name} rank={user.rank} />
+            <CompanyBadge companyName={apiUser.company_name} rank={apiUser.rank} />
             <div className="w-px h-8 bg-gray-200 dark:bg-gray-700" />
-            <CoinDisplay coins={user.coin} />
-            <RubyDisplay rubies={user.ruby} />
+            <CoinDisplay coins={apiUser.coin} />
+            <RubyDisplay rubies={apiUser.ruby} />
           </div>
         ) : (
           <div className="flex items-center gap-6 bg-gray-50 dark:bg-gray-800/50 px-6 py-2 rounded-2xl border border-gray-100 dark:border-gray-700">

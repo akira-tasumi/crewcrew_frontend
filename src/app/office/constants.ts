@@ -145,3 +145,82 @@ export const STATUS_TO_AREA: Record<string, TileType> = {
   'idle': TILE_TYPES.BREAK,          // 待機中
   'resting': TILE_TYPES.BREAK,       // 休憩中
 };
+
+/**
+ * クルーのロールと割り当てエリアのマッピング
+ * ランダムウォーク時に使用
+ */
+export const ROLE_TO_AREAS: Record<string, (keyof typeof AREA_BOUNDS)[]> = {
+  // エンジニア系
+  'エンジニア': ['DESK_1', 'DESK_2', 'AI_LAB', 'SERVER_ROOM'],
+  'プログラマー': ['DESK_1', 'DESK_2', 'AI_LAB', 'SERVER_ROOM'],
+  'バックエンドエンジニア': ['DESK_1', 'AI_LAB', 'SERVER_ROOM'],
+  'フロントエンドエンジニア': ['DESK_1', 'DESK_3', 'AI_LAB'],
+  'データサイエンティスト': ['AI_LAB', 'SERVER_ROOM', 'DESK_2'],
+  'AIエンジニア': ['AI_LAB', 'SERVER_ROOM'],
+  'インフラエンジニア': ['SERVER_ROOM', 'DESK_2'],
+
+  // クリエイター系
+  'デザイナー': ['DESK_3', 'DESK_4', 'MEETING_1', 'BREAK_1'],
+  'UIデザイナー': ['DESK_3', 'MEETING_1'],
+  'UXデザイナー': ['DESK_3', 'MEETING_1', 'MEETING_2'],
+  'グラフィックデザイナー': ['DESK_3', 'DESK_4'],
+  'イラストレーター': ['DESK_4', 'BREAK_1'],
+  'アーティスト': ['DESK_4', 'BREAK_1', 'BREAK_2'],
+  '動画クリエイター': ['DESK_3', 'AI_LAB'],
+
+  // ビジネス系
+  'マーケター': ['MEETING_1', 'MEETING_2', 'DESK_1', 'DESK_3'],
+  'プランナー': ['MEETING_1', 'MEETING_2', 'DESK_2'],
+  '企画': ['MEETING_1', 'MEETING_2'],
+  'ディレクター': ['MEETING_1', 'MEETING_2', 'MANAGEMENT'],
+  'プロデューサー': ['MEETING_1', 'MANAGEMENT'],
+  'マネージャー': ['MANAGEMENT', 'MEETING_1'],
+  '営業': ['MEETING_1', 'MEETING_2', 'BREAK_1'],
+  'コンサルタント': ['MEETING_1', 'MEETING_2', 'DESK_1'],
+
+  // ライター・リサーチ系
+  'ライター': ['DESK_2', 'DESK_4', 'BREAK_2'],
+  'コピーライター': ['DESK_2', 'MEETING_1'],
+  'リサーチャー': ['DESK_1', 'DESK_2', 'AI_LAB'],
+  'アナリスト': ['DESK_1', 'AI_LAB', 'SERVER_ROOM'],
+  'エディター': ['DESK_2', 'DESK_4'],
+
+  // サポート系
+  'アシスタント': ['DESK_1', 'DESK_2', 'DESK_3', 'DESK_4', 'BREAK_1', 'BREAK_2'],
+  'サポート': ['DESK_1', 'DESK_2', 'BREAK_1'],
+  '秘書': ['MANAGEMENT', 'DESK_1'],
+
+  // デフォルト（マッチしない場合）
+  'default': ['DESK_1', 'DESK_2', 'DESK_3', 'DESK_4', 'MEETING_1', 'MEETING_2', 'BREAK_1', 'BREAK_2'],
+};
+
+/**
+ * エリア名からエリア境界を取得するヘルパー
+ */
+export function getAreaBounds(areaName: keyof typeof AREA_BOUNDS) {
+  return AREA_BOUNDS[areaName];
+}
+
+/**
+ * ロールに適したエリアをランダムに取得
+ */
+export function getRandomAreaForRole(role: string): keyof typeof AREA_BOUNDS {
+  // ロールに部分一致するキーを探す
+  const matchedKey = Object.keys(ROLE_TO_AREAS).find(key =>
+    key !== 'default' && role.includes(key)
+  );
+
+  const areas = matchedKey ? ROLE_TO_AREAS[matchedKey] : ROLE_TO_AREAS['default'];
+  return areas[Math.floor(Math.random() * areas.length)];
+}
+
+/**
+ * エリア内のランダムな座標を取得
+ */
+export function getRandomPositionInArea(areaName: keyof typeof AREA_BOUNDS): { x: number; y: number } {
+  const bounds = AREA_BOUNDS[areaName];
+  const x = bounds.x1 + Math.floor(Math.random() * (bounds.x2 - bounds.x1 + 1));
+  const y = bounds.y1 + Math.floor(Math.random() * (bounds.y2 - bounds.y1 + 1));
+  return { x, y };
+}

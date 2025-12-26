@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import CrewImage from '@/components/CrewImage';
 import { RefreshCw, MessageCircle, Loader2 } from 'lucide-react';
@@ -23,8 +23,11 @@ import {
   TILE_LABELS,
   AREA_BOUNDS,
   type TileType,
+  getRandomAreaForRole,
+  getRandomPositionInArea,
 } from './constants';
 import CrewDetailModal from '@/components/CrewDetailModal';
+import TaskChatModal from '@/components/TaskChatModal';
 import { useAppSound } from '@/contexts/SoundContext';
 import { apiUrl } from '@/lib/api';
 
@@ -236,6 +239,9 @@ export default function OfficePage() {
   const [userCoin, setUserCoin] = useState<number>(0);
   const { playSound } = useAppSound();
 
+  // TaskChatModal用のstate
+  const [taskChatCrew, setTaskChatCrew] = useState<Crew | null>(null);
+
   // 気まぐれトークを取得
   const fetchWhimsicalTalk = useCallback(async () => {
     if (isLoadingTalk) return;
@@ -327,6 +333,110 @@ export default function OfficePage() {
     return () => clearInterval(timeInterval);
   }, [fetchCrews, fetchUserData]);
 
+  // クルーのランダムウォーク用のRef
+  const walkTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+
+  // クルーのランダムウォーク
+  useEffect(() => {
+    if (crews.length === 0 || crewSprites.length === 0) return;
+
+    // 現在のクルー位置を追跡（重なり防止用）
+    const occupiedPositions = new Map<string, number>(); // "x,y" -> crewId
+
+    // 位置が使用中かチェック
+    const isPositionOccupied = (x: number, y: number, excludeCrewId: number): boolean => {
+      const key = `${x},${y}`;
+      const occupier = occupiedPositions.get(key);
+      return occupier !== undefined && occupier !== excludeCrewId;
+    };
+
+    // 位置を登録
+    const registerPosition = (x: number, y: number, crewId: number) => {
+      occupiedPositions.set(`${x},${y}`, crewId);
+    };
+
+    // 位置を解除
+    const unregisterPosition = (x: number, y: number, crewId: number) => {
+      const key = `${x},${y}`;
+      if (occupiedPositions.get(key) === crewId) {
+        occupiedPositions.delete(key);
+      }
+    };
+
+    // 初期位置を登録
+    crewSprites.forEach((sprite) => {
+      registerPosition(sprite.gridX, sprite.gridY, sprite.id);
+    });
+
+    // 各クルーに対してランダムウォークを開始
+    const startRandomWalk = (crewId: number, role: string, isPartner: boolean, currentX: number, currentY: number) => {
+      // 相棒は管理エリアに固定
+      if (isPartner) return;
+
+      // 既存のタイマーをクリア
+      const existingTimer = walkTimersRef.current.get(crewId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      // 次の移動までのランダムな待機時間（9〜24秒 = 元の3倍）
+      const waitTime = 9000 + Math.random() * 15000;
+
+      const timer = setTimeout(() => {
+        // ロールに適したエリアを取得
+        const targetArea = getRandomAreaForRole(role);
+
+        // 重なりを避けて空いている位置を探す（最大10回試行）
+        let newPos = getRandomPositionInArea(targetArea);
+        let attempts = 0;
+        while (isPositionOccupied(newPos.x, newPos.y, crewId) && attempts < 10) {
+          newPos = getRandomPositionInArea(targetArea);
+          attempts++;
+        }
+
+        // 位置が見つからない場合は移動しない
+        if (!isPositionOccupied(newPos.x, newPos.y, crewId)) {
+          // 古い位置を解除、新しい位置を登録
+          unregisterPosition(currentX, currentY, crewId);
+          registerPosition(newPos.x, newPos.y, crewId);
+
+          setCrewSprites((prev) =>
+            prev.map((sprite) =>
+              sprite.id === crewId
+                ? { ...sprite, gridX: newPos.x, gridY: newPos.y }
+                : sprite
+            )
+          );
+
+          // 次のウォークをスケジュール（新しい位置で）
+          startRandomWalk(crewId, role, isPartner, newPos.x, newPos.y);
+        } else {
+          // 移動できなかった場合も次のウォークをスケジュール
+          startRandomWalk(crewId, role, isPartner, currentX, currentY);
+        }
+      }, waitTime);
+
+      walkTimersRef.current.set(crewId, timer);
+    };
+
+    // 各クルーのウォークを開始（初期遅延をずらす）
+    crewSprites.forEach((sprite, index) => {
+      const crew = crews.find((c) => c.id === sprite.id);
+      if (!crew) return;
+
+      const initialDelay = index * 1000 + Math.random() * 2000;
+      setTimeout(() => {
+        startRandomWalk(sprite.id, crew.role, crew.is_partner ?? false, sprite.gridX, sprite.gridY);
+      }, initialDelay);
+    });
+
+    // クリーンアップ
+    return () => {
+      walkTimersRef.current.forEach((timer) => clearTimeout(timer));
+      walkTimersRef.current.clear();
+    };
+  }, [crews, crewSprites.length > 0]); // crewSpritesが初期化されたら実行
+
   // クルークリック時のハンドラ
   const handleCrewClick = useCallback((crew: CrewSprite) => {
     playSound('click');
@@ -385,69 +495,72 @@ export default function OfficePage() {
   const displayMessage = whimsicalTalk || (partner?.greeting ?? '');
 
   return (
-    <div className="h-full overflow-hidden relative">
-      {/* 時間帯に応じた背景 */}
-      <div className={`absolute inset-0 -z-10 transition-colors duration-1000 ${officeBackground}`}>
-        {/* 夜の窓の明かり演出 */}
-        {isNightTime && (
-          <>
-            <div className="absolute top-20 left-[10%] w-16 h-24 bg-yellow-200/30 rounded-sm" />
-            <div className="absolute top-32 left-[25%] w-12 h-20 bg-yellow-300/20 rounded-sm" />
-            <div className="absolute top-16 right-[15%] w-14 h-22 bg-orange-200/25 rounded-sm" />
-            <div className="absolute top-28 right-[30%] w-10 h-18 bg-yellow-100/20 rounded-sm" />
-            {/* 星エフェクト（CSSアニメーションで軽量化） */}
-            {[5, 12, 25, 38, 45, 58, 72, 85, 92, 15, 33, 67, 78, 8, 55, 42, 88, 22, 63, 95].map((pos, i) => (
-              <div
-                key={`star-${i}`}
-                className="absolute w-1 h-1 bg-white rounded-full animate-pulse"
-                style={{
-                  left: `${pos}%`,
-                  top: `${(i * 7) % 35 + 5}%`,
-                  animationDuration: `${2 + (i % 3)}s`,
-                  animationDelay: `${i * 0.2}s`,
-                }}
-              />
-            ))}
-          </>
-        )}
+    <div className="h-full overflow-hidden flex flex-row">
+      {/* 左側: マップエリア (flex-1で可変幅) */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* 時間帯に応じた背景 */}
+        <div className={`absolute inset-0 -z-10 transition-colors duration-1000 ${officeBackground}`}>
+          {/* 夜の窓の明かり演出 */}
+          {isNightTime && (
+            <>
+              <div className="absolute top-20 left-[10%] w-16 h-24 bg-yellow-200/30 rounded-sm" />
+              <div className="absolute top-32 left-[25%] w-12 h-20 bg-yellow-300/20 rounded-sm" />
+              <div className="absolute top-16 right-[15%] w-14 h-22 bg-orange-200/25 rounded-sm" />
+              <div className="absolute top-28 right-[30%] w-10 h-18 bg-yellow-100/20 rounded-sm" />
+              {/* 星エフェクト（CSSアニメーションで軽量化） */}
+              {[5, 12, 25, 38, 45, 58, 72, 85, 92, 15, 33, 67, 78, 8, 55, 42, 88, 22, 63, 95].map((pos, i) => (
+                <div
+                  key={`star-${i}`}
+                  className="absolute w-1 h-1 bg-white rounded-full animate-pulse"
+                  style={{
+                    left: `${pos}%`,
+                    top: `${(i * 7) % 35 + 5}%`,
+                    animationDuration: `${2 + (i % 3)}s`,
+                    animationDelay: `${i * 0.2}s`,
+                  }}
+                />
+              ))}
+            </>
+          )}
 
-        {/* 朝の太陽光演出 */}
-        {timeOfDay === 'morning' && (
-          <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-200/40 rounded-full blur-3xl" />
-        )}
+          {/* 朝の太陽光演出 */}
+          {timeOfDay === 'morning' && (
+            <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-200/40 rounded-full blur-3xl" />
+          )}
 
-        {/* 夕方の夕焼け演出 */}
-        {timeOfDay === 'evening' && (
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-orange-300/30 to-transparent" />
-        )}
+          {/* 夕方の夕焼け演出 */}
+          {timeOfDay === 'evening' && (
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-orange-300/30 to-transparent" />
+          )}
+        </div>
+
+        {/* マップ */}
+        <div className="h-full flex items-center justify-center">
+          {loading ? (
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full"
+            />
+          ) : (
+            <MapCanvas
+              crews={crewSprites}
+              onCrewClick={handleCrewClick}
+              onTileClick={handleTileClick}
+              selectedCrewId={selectedCrew?.id}
+            />
+          )}
+        </div>
       </div>
 
-      {/* マップエリア */}
-      <div className="h-full flex items-center justify-center">
-        {loading ? (
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full"
-          />
-        ) : (
-          <MapCanvas
-            crews={crewSprites}
-            onCrewClick={handleCrewClick}
-            onTileClick={handleTileClick}
-            selectedCrewId={selectedCrew?.id}
-          />
-        )}
-      </div>
-
-      {/* 右上: タイトル & 統計 & 凡例 */}
+      {/* 右側: 固定幅サイドバー (w-80) */}
       <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
-        className="absolute top-4 right-4 z-10 space-y-3"
+        className="w-80 h-full bg-black/60 backdrop-blur-md border-l border-white/10 overflow-y-auto p-4 space-y-4 flex-shrink-0"
       >
         {/* タイトル & 統計 */}
-        <div className="bg-black/60 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+        <div className="bg-black/40 rounded-2xl p-4 border border-white/10">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl">
               <Building2 className="text-white" size={24} />
@@ -476,7 +589,7 @@ export default function OfficePage() {
         </div>
 
         {/* 凡例 */}
-        <div className="bg-black/60 backdrop-blur-md rounded-xl p-3 border border-white/10">
+        <div className="bg-black/40 rounded-xl p-3 border border-white/10">
           <p className="text-xs text-gray-400 mb-2">エリア凡例</p>
           <div className="grid grid-cols-2 gap-2">
             {Object.entries(TILE_LABELS)
@@ -508,7 +621,7 @@ export default function OfficePage() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.3 }}
-            className="bg-black/60 backdrop-blur-md rounded-xl p-3 border border-white/10"
+            className="bg-black/40 rounded-xl p-3 border border-white/10"
           >
             <div className="flex items-center gap-3">
               {/* 相棒アイコン */}
@@ -592,153 +705,226 @@ export default function OfficePage() {
             </div>
           </motion.div>
         )}
-      </motion.div>
 
-      {/* 右下: フローティングパネル */}
-      <AnimatePresence mode="wait">
-        {showPanel && (selectedCrew || selectedArea) && (
-          <motion.div
-            key={selectedCrew?.id ?? selectedArea ?? 'panel'}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            transition={{ duration: 0.15 }}
-            className="absolute bottom-4 right-4 z-20 w-80"
-          >
-            {selectedCrew && selectedCrewData ? (
-              // クルー詳細パネル
-              <div className="bg-black/80 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10">
-                {/* ヘッダー */}
-                <div className="bg-gradient-to-r from-purple-600/80 to-pink-600/80 p-4 relative">
-                  <button
-                    onClick={closePanel}
-                    className="absolute top-3 right-3 text-white/80 hover:text-white transition-colors"
-                  >
-                    <X size={20} />
-                  </button>
-                  <div className="flex items-center gap-4">
-                    <motion.div
-                      className="relative cursor-pointer"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => openDetailModal(selectedCrewData)}
+        {/* クルー/エリア詳細パネル */}
+        <AnimatePresence mode="wait">
+          {showPanel && (selectedCrew || selectedArea) && (
+            <motion.div
+              key={selectedCrew?.id ?? selectedArea ?? 'panel'}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              transition={{ duration: 0.15 }}
+            >
+              {selectedCrew && selectedCrewData ? (
+                // クルー詳細パネル
+                <div className="bg-black/40 rounded-2xl overflow-hidden border border-white/10">
+                  {/* ヘッダー */}
+                  <div className="bg-gradient-to-r from-purple-600/80 to-pink-600/80 p-4 relative">
+                    <button
+                      onClick={closePanel}
+                      className="absolute top-3 right-3 text-white/80 hover:text-white transition-colors"
                     >
-                      <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-white/50 bg-white/20 hover:border-purple-400 transition-colors">
-                        <CrewImage
-                          src={selectedCrewData.image}
-                          alt={selectedCrewData.name}
-                          width={56}
-                          height={56}
-                          className="object-cover scale-150 translate-y-1"
+                      <X size={20} />
+                    </button>
+                    <div className="flex items-center gap-4">
+                      <motion.div
+                        className="relative cursor-pointer"
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => openDetailModal(selectedCrewData)}
+                      >
+                        <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-white/50 bg-white/20 hover:border-purple-400 transition-colors">
+                          <CrewImage
+                            src={selectedCrewData.image}
+                            alt={selectedCrewData.name}
+                            width={56}
+                            height={56}
+                            className="object-cover scale-150 translate-y-1"
+                          />
+                        </div>
+                        {selectedCrew.isPartner && (
+                          <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-1">
+                            <Crown size={10} className="text-yellow-800" />
+                          </div>
+                        )}
+                      </motion.div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-bold text-white">
+                            {selectedCrewData.name}
+                          </h3>
+                          {selectedCrew.isPartner && (
+                            <span className="text-xs bg-yellow-400 text-yellow-900 px-1.5 py-0.5 rounded-full font-medium">
+                              相棒
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-white/80 text-sm">{selectedCrewData.role}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 詳細情報 */}
+                  <div className="p-4 space-y-3">
+                    {/* レベル & EXP */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-gray-400">
+                          Level {selectedCrewData.level}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {selectedCrewData.exp}/100 EXP
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${selectedCrewData.exp}%` }}
+                          className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
                         />
                       </div>
-                      {selectedCrew.isPartner && (
-                        <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-1">
-                          <Crown size={10} className="text-yellow-800" />
-                        </div>
-                      )}
-                    </motion.div>
-                    <div>
+                    </div>
+
+                    {/* 現在の状態 */}
+                    <div className="bg-white/5 rounded-lg p-2">
+                      <p className="text-xs text-gray-500 mb-1">現在のステータス</p>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-bold text-white">
-                          {selectedCrewData.name}
-                        </h3>
-                        {selectedCrew.isPartner && (
-                          <span className="text-xs bg-yellow-400 text-yellow-900 px-1.5 py-0.5 rounded-full font-medium">
-                            相棒
-                          </span>
-                        )}
+                        <div
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            selectedCrew.status === 'working'
+                              ? 'bg-green-500'
+                              : selectedCrew.status === 'generating'
+                              ? 'bg-purple-500'
+                              : selectedCrew.status === 'managing'
+                              ? 'bg-orange-500'
+                              : 'bg-gray-400'
+                          }`}
+                        />
+                        <span className="text-sm font-medium text-gray-200">
+                          {selectedCrew.status === 'working' && '作業中'}
+                          {selectedCrew.status === 'generating' && 'AI処理中'}
+                          {selectedCrew.status === 'planning' && '企画中'}
+                          {selectedCrew.status === 'managing' && '管理中'}
+                          {selectedCrew.status === 'idle' && '待機中'}
+                          {selectedCrew.status === 'resting' && '休憩中'}
+                        </span>
                       </div>
-                      <p className="text-white/80 text-sm">{selectedCrewData.role}</p>
                     </div>
+
+                    {/* 位置情報 */}
+                    <p className="text-xs text-gray-500 mb-3">
+                      位置: ({selectedCrew.gridX}, {selectedCrew.gridY})
+                    </p>
+
+                    {/* タスク依頼ボタン */}
+                    <motion.button
+                      onClick={() => {
+                        playSound('click');
+                        setTaskChatCrew(selectedCrewData);
+                      }}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-medium py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg"
+                    >
+                      <MessageSquare size={18} />
+                      タスクを依頼
+                    </motion.button>
                   </div>
                 </div>
-
-                {/* 詳細情報 */}
-                <div className="p-4 space-y-3">
-                  {/* レベル & EXP */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-gray-400">
-                        Level {selectedCrewData.level}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {selectedCrewData.exp}/100 EXP
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${selectedCrewData.exp}%` }}
-                        className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
-                      />
+              ) : selectedArea ? (
+                // エリア詳細パネル
+                <div className="bg-black/40 rounded-2xl overflow-hidden border border-white/10">
+                  <div className={`bg-gradient-to-r ${AREA_INFO[selectedArea].color} bg-opacity-80 p-4 relative`}>
+                    <button
+                      onClick={closePanel}
+                      className="absolute top-3 right-3 text-white/80 hover:text-white transition-colors"
+                    >
+                      <X size={20} />
+                    </button>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center text-white">
+                        {AREA_INFO[selectedArea].icon}
+                      </div>
+                      <h3 className="text-lg font-bold text-white">
+                        {AREA_INFO[selectedArea].name}
+                      </h3>
                     </div>
                   </div>
 
-                  {/* 現在の状態 */}
-                  <div className="bg-white/5 rounded-lg p-2">
-                    <p className="text-xs text-gray-500 mb-1">現在のステータス</p>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          selectedCrew.status === 'working'
-                            ? 'bg-green-500'
-                            : selectedCrew.status === 'generating'
-                            ? 'bg-purple-500'
-                            : selectedCrew.status === 'managing'
-                            ? 'bg-orange-500'
-                            : 'bg-gray-400'
-                        }`}
-                      />
-                      <span className="text-sm font-medium text-gray-200">
-                        {selectedCrew.status === 'working' && '作業中'}
-                        {selectedCrew.status === 'generating' && 'AI処理中'}
-                        {selectedCrew.status === 'planning' && '企画中'}
-                        {selectedCrew.status === 'managing' && '管理中'}
-                        {selectedCrew.status === 'idle' && '待機中'}
-                        {selectedCrew.status === 'resting' && '休憩中'}
-                      </span>
-                    </div>
-                  </div>
+                  <div className="p-4">
+                    <p className="text-gray-400 text-sm mb-3">
+                      {AREA_INFO[selectedArea].description}
+                    </p>
 
-                  {/* 位置情報 */}
-                  <p className="text-xs text-gray-500">
-                    位置: ({selectedCrew.gridX}, {selectedCrew.gridY})
-                  </p>
-                </div>
-              </div>
-            ) : selectedArea ? (
-              // エリア詳細パネル
-              <div className="bg-black/80 backdrop-blur-md rounded-2xl overflow-hidden border border-white/10">
-                <div className={`bg-gradient-to-r ${AREA_INFO[selectedArea].color} bg-opacity-80 p-4 relative`}>
-                  <button
-                    onClick={closePanel}
-                    className="absolute top-3 right-3 text-white/80 hover:text-white transition-colors"
-                  >
-                    <X size={20} />
-                  </button>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center text-white">
-                      {AREA_INFO[selectedArea].icon}
-                    </div>
-                    <h3 className="text-lg font-bold text-white">
-                      {AREA_INFO[selectedArea].name}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="p-4">
-                  <p className="text-gray-400 text-sm mb-3">
-                    {AREA_INFO[selectedArea].description}
-                  </p>
-
-                  {/* このエリアにいるクルー */}
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">このエリアのクルー</p>
-                    <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                      {crewSprites
-                        .filter((sprite) => {
-                          // エリアの範囲内にいるクルーをフィルタ
+                    {/* このエリアにいるクルー */}
+                    <div>
+                      <p className="text-xs text-gray-500 mb-2">このエリアのクルー</p>
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                        {crewSprites
+                          .filter((sprite) => {
+                            // エリアの範囲内にいるクルーをフィルタ
+                            const areaKey = Object.keys(AREA_BOUNDS).find((key) => {
+                              const bounds = AREA_BOUNDS[key as keyof typeof AREA_BOUNDS];
+                              return (
+                                sprite.gridX >= bounds.x1 &&
+                                sprite.gridX <= bounds.x2 &&
+                                sprite.gridY >= bounds.y1 &&
+                                sprite.gridY <= bounds.y2
+                              );
+                            });
+                            // エリアタイプと一致するかチェック
+                            if (!areaKey) return false;
+                            const areaToTile: Record<string, TileType> = {
+                              MANAGEMENT: TILE_TYPES.MANAGEMENT,
+                              AI_LAB: TILE_TYPES.AI_LAB,
+                              SERVER_ROOM: TILE_TYPES.SERVER_LARGE,
+                              DESK_1: TILE_TYPES.DESK,
+                              DESK_2: TILE_TYPES.DESK,
+                              DESK_3: TILE_TYPES.DESK,
+                              DESK_4: TILE_TYPES.DESK,
+                              MEETING_1: TILE_TYPES.MEETING,
+                              MEETING_2: TILE_TYPES.MEETING,
+                              BREAK_1: TILE_TYPES.BREAK,
+                              BREAK_2: TILE_TYPES.BREAK,
+                              VENDING_1: TILE_TYPES.VENDING,
+                              VENDING_2: TILE_TYPES.VENDING,
+                            };
+                            return areaToTile[areaKey] === selectedArea;
+                          })
+                          .map((sprite) => {
+                            const crewData = crews.find((c) => c.id === sprite.id);
+                            if (!crewData) return null;
+                            return (
+                              <div
+                                key={sprite.id}
+                                onClick={() => {
+                                  setSelectedCrew(sprite);
+                                  setSelectedArea(null);
+                                }}
+                                className="flex items-center gap-2 p-1.5 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors"
+                              >
+                                <div className="w-6 h-6 rounded-full overflow-hidden bg-purple-900/50">
+                                  <CrewImage
+                                    src={crewData.image}
+                                    alt={crewData.name}
+                                    width={24}
+                                    height={24}
+                                    className="object-cover scale-150 translate-y-0.5"
+                                  />
+                                </div>
+                                <div>
+                                  <p className="text-xs font-medium text-gray-200">
+                                    {crewData.name}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {crewData.role}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        {crewSprites.filter((sprite) => {
                           const areaKey = Object.keys(AREA_BOUNDS).find((key) => {
                             const bounds = AREA_BOUNDS[key as keyof typeof AREA_BOUNDS];
                             return (
@@ -748,7 +934,6 @@ export default function OfficePage() {
                               sprite.gridY <= bounds.y2
                             );
                           });
-                          // エリアタイプと一致するかチェック
                           if (!areaKey) return false;
                           const areaToTile: Record<string, TileType> = {
                             MANAGEMENT: TILE_TYPES.MANAGEMENT,
@@ -766,79 +951,20 @@ export default function OfficePage() {
                             VENDING_2: TILE_TYPES.VENDING,
                           };
                           return areaToTile[areaKey] === selectedArea;
-                        })
-                        .map((sprite) => {
-                          const crewData = crews.find((c) => c.id === sprite.id);
-                          if (!crewData) return null;
-                          return (
-                            <div
-                              key={sprite.id}
-                              onClick={() => {
-                                setSelectedCrew(sprite);
-                                setSelectedArea(null);
-                              }}
-                              className="flex items-center gap-2 p-1.5 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors"
-                            >
-                              <div className="w-6 h-6 rounded-full overflow-hidden bg-purple-900/50">
-                                <CrewImage
-                                  src={crewData.image}
-                                  alt={crewData.name}
-                                  width={24}
-                                  height={24}
-                                  className="object-cover scale-150 translate-y-0.5"
-                                />
-                              </div>
-                              <div>
-                                <p className="text-xs font-medium text-gray-200">
-                                  {crewData.name}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                  {crewData.role}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      {crewSprites.filter((sprite) => {
-                        const areaKey = Object.keys(AREA_BOUNDS).find((key) => {
-                          const bounds = AREA_BOUNDS[key as keyof typeof AREA_BOUNDS];
-                          return (
-                            sprite.gridX >= bounds.x1 &&
-                            sprite.gridX <= bounds.x2 &&
-                            sprite.gridY >= bounds.y1 &&
-                            sprite.gridY <= bounds.y2
-                          );
-                        });
-                        if (!areaKey) return false;
-                        const areaToTile: Record<string, TileType> = {
-                          MANAGEMENT: TILE_TYPES.MANAGEMENT,
-                          AI_LAB: TILE_TYPES.AI_LAB,
-                          SERVER_ROOM: TILE_TYPES.SERVER_LARGE,
-                          DESK_1: TILE_TYPES.DESK,
-                          DESK_2: TILE_TYPES.DESK,
-                          DESK_3: TILE_TYPES.DESK,
-                          DESK_4: TILE_TYPES.DESK,
-                          MEETING_1: TILE_TYPES.MEETING,
-                          MEETING_2: TILE_TYPES.MEETING,
-                          BREAK_1: TILE_TYPES.BREAK,
-                          BREAK_2: TILE_TYPES.BREAK,
-                          VENDING_1: TILE_TYPES.VENDING,
-                          VENDING_2: TILE_TYPES.VENDING,
-                        };
-                        return areaToTile[areaKey] === selectedArea;
-                      }).length === 0 && (
-                        <p className="text-xs text-gray-500 italic">
-                          このエリアにクルーはいません
-                        </p>
-                      )}
+                        }).length === 0 && (
+                          <p className="text-xs text-gray-500 italic">
+                            このエリアにクルーはいません
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ) : null}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              ) : null}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
 
       {/* クルー詳細モーダル（My Crewsと同じ） */}
       <CrewDetailModal
@@ -867,6 +993,17 @@ export default function OfficePage() {
         userCoin={userCoin}
         onCrewEvolved={handleCrewEvolved}
         onCoinUpdated={(newCoin) => setUserCoin(newCoin)}
+      />
+
+      {/* タスク依頼チャットモーダル */}
+      <TaskChatModal
+        isOpen={taskChatCrew !== null}
+        onClose={() => setTaskChatCrew(null)}
+        crew={taskChatCrew}
+        onTaskComplete={(result) => {
+          playSound('success');
+          console.log('Task completed:', result);
+        }}
       />
     </div>
   );

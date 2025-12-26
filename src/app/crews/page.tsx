@@ -7,8 +7,10 @@ import CrewCard, { Crew, Skills } from '@/components/CrewCard';
 import CrewDetailModal from '@/components/CrewDetailModal';
 import CrewLogModal from '@/components/CrewLogModal';
 import LevelUpNotification from '@/components/LevelUpNotification';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { onCrewExpUpdate, CrewExpUpdateEvent } from '@/lib/crewEvents';
 import { useAppSound } from '@/contexts/SoundContext';
+import { useUser } from '@/contexts/UserContext';
 import { apiUrl } from '@/lib/api';
 
 // ダミーのスキルデータ（バックエンドから取得するまでの仮データ）
@@ -162,30 +164,18 @@ function AddCrewModal({
             </button>
           </div>
 
-          {/* AI生成中のオーバーレイ */}
-          {isSubmitting && imageMode === 'ai' && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 z-10 flex flex-col items-center justify-center"
-            >
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full mb-4"
-              />
-              <motion.p
-                animate={{ opacity: [0.5, 1, 0.5] }}
-                transition={{ duration: 1.5, repeat: Infinity }}
-                className="text-lg font-medium text-gray-700 dark:text-gray-200"
-              >
-                AIがアイコンを生成中...
-              </motion.p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                少々お待ちください（10〜20秒）
-              </p>
-            </motion.div>
-          )}
+          {/* AI生成中のローディングオーバーレイ */}
+          <LoadingOverlay
+            isLoading={isSubmitting && imageMode === 'ai'}
+            messages={[
+              'クルーのプロフィールを作成中...',
+              'AIがアイコンをデザイン中...',
+              'ピクセルを丁寧に配置しています...',
+              '個性的なキャラクターを生成中...',
+              '最終調整をしています...',
+              'まもなく完成です！',
+            ]}
+          />
 
           {/* フォーム */}
           <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[70vh]">
@@ -540,9 +530,12 @@ export default function CrewsPage() {
   const [welcomeCrew, setWelcomeCrew] = useState<CreatedCrewInfo | null>(null);
   const [selectedDetailCrew, setSelectedDetailCrew] = useState<Crew | null>(null);
   const [selectedLogCrew, setSelectedLogCrew] = useState<Crew | null>(null);
-  const [userRuby, setUserRuby] = useState<number>(10); // ユーザーのルビー残高
-  const [userCoin, setUserCoin] = useState<number>(0); // ユーザーのコイン残高
   const { playSound } = useAppSound();
+
+  // UserContextからグローバルなユーザー情報を取得
+  const { apiUser, refreshApiUser, addCoin, updateCoin, subtractRuby } = useUser();
+  const userRuby = apiUser?.ruby ?? 10;
+  const userCoin = apiUser?.coin ?? 0;
 
   // クルーデータを取得
   const fetchCrews = useCallback(() => {
@@ -567,18 +560,12 @@ export default function CrewsPage() {
       });
   }, []);
 
-  // ユーザーデータを取得（ルビー・コイン残高）
+  // ユーザーデータを取得（UserContext経由）
   const fetchUserData = useCallback(() => {
-    fetch(apiUrl('/api/user'))
-      .then((res) => res.json())
-      .then((data) => {
-        setUserRuby(data.ruby || 10);
-        setUserCoin(data.coin || 0);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch user data:', err);
-      });
-  }, []);
+    refreshApiUser().catch((err) => {
+      console.error('Failed to refresh user data:', err);
+    });
+  }, [refreshApiUser]);
 
   useEffect(() => {
     fetchCrews();
@@ -657,6 +644,40 @@ export default function CrewsPage() {
     fetchUserData();
   }, [fetchUserData]);
 
+  // 独立（Farewell）処理
+  const handleFarewell = useCallback((crew: Crew, coinReward: number) => {
+    // まずUIからクルーを削除（即座に反映）
+    setCrews((prevCrews) => prevCrews.filter((c) => c.id !== crew.id));
+    setSelectedDetailCrew(null);
+
+    // コインをUIに反映（UserContext経由でグローバルに反映）
+    addCoin(coinReward);
+
+    // バックグラウンドでAPI呼び出し（エラーが出てもUIには影響しない）
+    const deleteUrl = apiUrl(`/api/crews/${crew.id}`);
+    const coinUrl = apiUrl('/api/user/add-coin');
+
+    console.log('[Farewell] Deleting crew:', crew.id, 'URL:', deleteUrl);
+
+    fetch(deleteUrl, { method: 'DELETE' })
+      .then((res) => {
+        console.log('[Farewell] Delete response:', res.status);
+        return fetch(coinUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: coinReward }),
+        });
+      })
+      .then(() => {
+        console.log('[Farewell] Coin added:', coinReward);
+        // API完了後にUserContextを更新（サーバーの実際の値を反映）
+        refreshApiUser();
+      })
+      .catch((error) => {
+        console.warn('[Farewell] API error (UI already updated):', error);
+      });
+  }, [addCoin, refreshApiUser]);
+
   const handleLevelUpComplete = useCallback(() => {
     setLevelingUpCrewId(null);
   }, []);
@@ -716,7 +737,8 @@ export default function CrewsPage() {
         userRuby={userRuby}
         userCoin={userCoin}
         onCrewEvolved={handleCrewEvolved}
-        onCoinUpdated={(newCoin) => setUserCoin(newCoin)}
+        onCoinUpdated={(newCoin) => updateCoin(newCoin)}
+        onFarewell={handleFarewell}
       />
 
       {/* クルーログモーダル */}
