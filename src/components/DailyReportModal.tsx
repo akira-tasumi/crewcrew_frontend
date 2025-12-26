@@ -44,6 +44,7 @@ type Props = {
   report: DailyReportResponse | null;
   partner: Partner | null;
   onCoinUpdate: () => void;
+  onComplete?: () => void;  // 日報完了時のコールバック
 };
 
 // 演出フェーズ
@@ -55,6 +56,7 @@ export default function DailyReportModal({
   report,
   partner,
   onCoinUpdate,
+  onComplete,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('counting');
   const [displayedTaskCount, setDisplayedTaskCount] = useState(0);
@@ -441,6 +443,7 @@ export default function DailyReportModal({
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     playSound('confirm');
+                    onComplete?.();  // 日報完了コールバックを呼び出し
                     onClose();
                   }}
                   className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black py-4 rounded-2xl shadow-lg transition-all text-lg"

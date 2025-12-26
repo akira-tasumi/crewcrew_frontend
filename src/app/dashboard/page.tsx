@@ -41,12 +41,13 @@ import { useUser } from '@/contexts/UserContext';
 import { apiUrl } from '@/lib/api';
 
 type Task = {
-  id: number;
-  title: string;
+  id: number | string;
+  title?: string;
+  content?: string;  // URL要約やファイル要約時に使用
   status: 'completed' | 'in_progress' | 'pending';
   crewId: number;
   crewName: string;
-  crewImage: string;
+  crewImage?: string;  // オプショナルに変更
   result?: string;  // AIが生成したテキストをそのまま保持
   // EXP/レベルアップ情報
   expGained?: number;
@@ -146,6 +147,13 @@ type WebSummaryResponse = {
   crew_name: string | null;
   crew_image: string | null;
   error: string | null;
+  // EXP/レベル関連
+  exp_gained: number | null;
+  old_level: number | null;
+  new_level: number | null;
+  new_exp: number | null;
+  leveled_up: boolean;
+  coin_gained: number | null;
 };
 
 type FileSummaryResponse = {
@@ -157,6 +165,13 @@ type FileSummaryResponse = {
   crew_name: string | null;
   crew_image: string | null;
   error: string | null;
+  // EXP/レベル関連
+  exp_gained: number | null;
+  old_level: number | null;
+  new_level: number | null;
+  new_exp: number | null;
+  leveled_up: boolean;
+  coin_gained: number | null;
 };
 
 // Director Mode 型定義
@@ -736,14 +751,30 @@ export default function DashboardPage() {
       setTimeOfDay(getTimeOfDay());
     }, 60000);
 
-    // タスク一覧（ダミー）
-    setTimeout(() => {
-      setTasks(DUMMY_TASKS);
-      setLoading(false);
-    }, 500);
+    // タスク一覧をlocalStorageから読み込み
+    try {
+      const savedTasks = localStorage.getItem('crewcrew_tasks');
+      if (savedTasks) {
+        setTasks(JSON.parse(savedTasks));
+      }
+    } catch (err) {
+      console.error('Failed to load tasks from localStorage:', err);
+    }
+    setLoading(false);
 
     return () => clearInterval(timeInterval);
   }, []);
+
+  // タスクが変更されたらlocalStorageに保存
+  useEffect(() => {
+    if (!loading && tasks.length > 0) {
+      try {
+        localStorage.setItem('crewcrew_tasks', JSON.stringify(tasks));
+      } catch (err) {
+        console.error('Failed to save tasks to localStorage:', err);
+      }
+    }
+  }, [tasks, loading]);
 
   const getSelectedCrew = () => crews.find((c) => c.id === selectedCrewId);
 
@@ -823,6 +854,50 @@ export default function DashboardPage() {
         setWebSummaryResult(data);
         setShowWebSummaryModal(true);
         setUrlInput(''); // 入力をクリア
+
+        // タスク進捗リストに追加
+        if (data.crew_id && data.crew_name) {
+          const webTask: Task = {
+            id: Date.now().toString(),
+            content: `URL要約: ${urlInput.trim().substring(0, 50)}...`,
+            crewId: data.crew_id,
+            crewName: data.crew_name,
+            crewImage: data.crew_image || undefined,
+            status: 'completed',
+            result: data.summary || undefined,
+            expGained: data.exp_gained || undefined,
+            oldLevel: data.old_level || undefined,
+            newLevel: data.new_level || undefined,
+            leveledUp: data.leveled_up,
+          };
+          setTasks(prev => [...prev, webTask]);
+        }
+
+        // EXP更新イベントを発火（My Crewsページに通知）
+        if (data.crew_id && data.new_exp !== null && data.new_level !== null && data.exp_gained !== null) {
+          emitCrewExpUpdate({
+            crewId: data.crew_id,
+            crewName: data.crew_name || '',
+            newExp: data.new_exp,
+            newLevel: data.new_level,
+            expGained: data.exp_gained,
+            leveledUp: data.leveled_up,
+          });
+
+          // レベルアップ時は通知を表示
+          if (data.leveled_up && data.crew_name && data.new_level) {
+            playSound('levelUp');
+            setLevelUpNotification({
+              crewName: data.crew_name,
+              newLevel: data.new_level,
+            });
+          }
+        }
+
+        // コイン取得時はユーザー情報を再取得
+        if (data.coin_gained) {
+          fetchUser();
+        }
       } else {
         playSound('error');
         alert(data.error || 'Web記事の要約に失敗しました');
@@ -872,6 +947,50 @@ export default function DashboardPage() {
         playSound('success');
         setFileSummaryResult(data);
         setShowFileSummaryModal(true);
+
+        // タスク進捗リストに追加
+        if (data.crew_id && data.crew_name) {
+          const fileTask: Task = {
+            id: Date.now().toString(),
+            content: `PDF解析: ${file.name.substring(0, 30)}...`,
+            crewId: data.crew_id,
+            crewName: data.crew_name,
+            crewImage: data.crew_image || undefined,
+            status: 'completed',
+            result: data.summary || undefined,
+            expGained: data.exp_gained || undefined,
+            oldLevel: data.old_level || undefined,
+            newLevel: data.new_level || undefined,
+            leveledUp: data.leveled_up,
+          };
+          setTasks(prev => [...prev, fileTask]);
+        }
+
+        // EXP更新イベントを発火（My Crewsページに通知）
+        if (data.crew_id && data.new_exp !== null && data.new_level !== null && data.exp_gained !== null) {
+          emitCrewExpUpdate({
+            crewId: data.crew_id,
+            crewName: data.crew_name || '',
+            newExp: data.new_exp,
+            newLevel: data.new_level,
+            expGained: data.exp_gained,
+            leveledUp: data.leveled_up,
+          });
+
+          // レベルアップ時は通知を表示
+          if (data.leveled_up && data.crew_name && data.new_level) {
+            playSound('levelUp');
+            setLevelUpNotification({
+              crewName: data.crew_name,
+              newLevel: data.new_level,
+            });
+          }
+        }
+
+        // コイン取得時はユーザー情報を再取得
+        if (data.coin_gained) {
+          fetchUser();
+        }
       } else {
         playSound('error');
         alert(data.error || 'PDFの解析に失敗しました');
@@ -1761,13 +1880,13 @@ export default function DashboardPage() {
                   }`}
                 >
                   <CrewMiniIcon
-                    image={task.crewImage}
+                    image={task.crewImage || '/images/crews/monster_1.png'}
                     name={task.crewName}
                     isWorking={task.status === 'in_progress'}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-gray-800 dark:text-gray-100 truncate">
-                      {task.title}
+                      {task.title || task.content}
                     </div>
                     <div className="text-sm text-gray-500 dark:text-gray-400">
                       担当: {task.crewName}
@@ -1780,6 +1899,17 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-3">
+                    {/* EXP獲得バッジ */}
+                    {task.status === 'completed' && task.expGained && (
+                      <motion.div
+                        initial={{ scale: 0, rotate: -10 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-lg flex items-center gap-1"
+                      >
+                        <Sparkles size={12} />
+                        <span>EXP +{task.expGained} GET!</span>
+                      </motion.div>
+                    )}
                     {task.status === 'completed' && task.result && (
                       <motion.div
                         whileHover={{ scale: 1.1 }}
@@ -2171,6 +2301,11 @@ export default function DashboardPage() {
           report={dailyReport}
           partner={partner}
           onCoinUpdate={refreshApiUser}
+          onComplete={() => {
+            // 日報完了時にタスクリストをクリア
+            setTasks([]);
+            localStorage.removeItem('crewcrew_tasks');
+          }}
         />
 
         {/* 連携デモモーダル */}
