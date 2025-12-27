@@ -104,7 +104,6 @@ export default function CrewLogModal({ isOpen, onClose, crew }: Props) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-        onClick={onClose}
       >
         <motion.div
           initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -112,7 +111,6 @@ export default function CrewLogModal({ isOpen, onClose, crew }: Props) {
           exit={{ opacity: 0, scale: 0.9, y: 20 }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
         >
           {/* ヘッダー */}
           <div className="bg-gradient-to-r from-blue-500 to-cyan-500 p-4 flex items-center justify-between">

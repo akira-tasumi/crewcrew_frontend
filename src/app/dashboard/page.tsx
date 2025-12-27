@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import CrewImage from '@/components/CrewImage';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -32,6 +33,7 @@ import {
   Paperclip,
   Image as ImageIcon,
   FileSpreadsheet,
+  Save,
 } from 'lucide-react';
 import { useRef } from 'react';
 import { emitCrewExpUpdate } from '@/lib/crewEvents';
@@ -212,6 +214,29 @@ type ExecuteProjectTaskResult = {
   instruction: string;
   result: string;
   status: 'completed' | 'error';
+  // v2 (LangGraph) 追加フィールド
+  score?: number;
+  critique?: string;
+  revision_count?: number;
+};
+
+// v2 (LangGraph) 自己修正ループ進捗の型
+type V2LoopProgress = {
+  task_index: number;
+  crew_name: string;
+  crew_image: string;
+  current_revision: number;
+  max_revisions: number;
+  events: V2LoopEvent[];
+};
+
+type V2LoopEvent = {
+  type: 'generation_complete' | 'reflection_complete' | 'revision_start';
+  message: string;
+  score?: number;
+  critique?: string;
+  draft_preview?: string;
+  timestamp: number;
 };
 
 type ExecuteProjectResponse = {
@@ -576,7 +601,8 @@ function PartnerDisplayCompact({
   );
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
+  const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [crews, setCrews] = useState<Crew[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -597,6 +623,9 @@ export default function DashboardPage() {
 
   // UserContextからグローバルなユーザー情報管理を取得
   const { refreshApiUser } = useUser();
+
+  // クエリパラメータからプロジェクト自動実行フラグ
+  const [autoRunProcessed, setAutoRunProcessed] = useState(false);
 
   // スカウト機能
   const [isScouting, setIsScouting] = useState(false);
@@ -660,6 +689,16 @@ export default function DashboardPage() {
   const [currentExecutingTaskIndex, setCurrentExecutingTaskIndex] = useState(-1);
   const [showProjectComplete, setShowProjectComplete] = useState(false);
   const [expandedTaskResults, setExpandedTaskResults] = useState<Record<number, boolean>>({});
+
+  // プロジェクト保存モーダル
+  const [showSaveProjectModal, setShowSaveProjectModal] = useState(false);
+  const [saveProjectTitle, setSaveProjectTitle] = useState('');
+  const [saveProjectDescription, setSaveProjectDescription] = useState('');
+  const [isSavingProject, setIsSavingProject] = useState(false);
+
+  // v2 (LangGraph) モード: 自己修正ループ
+  const [useV2Mode, setUseV2Mode] = useState(false);
+  const [v2LoopProgress, setV2LoopProgress] = useState<V2LoopProgress | null>(null);
 
   // ユーザー情報を取得
   const fetchUser = async () => {
@@ -787,6 +826,32 @@ export default function DashboardPage() {
       }
     }
   }, [tasks, loading]);
+
+  // クエリパラメータからプロジェクト自動実行
+  useEffect(() => {
+    if (autoRunProcessed || loading || !partner) return;
+
+    const mode = searchParams.get('mode');
+    const prompt = searchParams.get('prompt');
+
+    if (mode === 'project' && prompt) {
+      setAutoRunProcessed(true);
+      // プロジェクトモードに切り替え
+      setInputMode('project');
+      // プロンプトをセット
+      setProjectGoal(prompt);
+
+      // 少し待ってからプロジェクト計画を開始
+      setTimeout(() => {
+        // URLからクエリパラメータを削除
+        window.history.replaceState({}, '', '/dashboard');
+
+        // プロジェクト計画を自動生成
+        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+        handleCreateProjectPlan(fakeEvent);
+      }, 500);
+    }
+  }, [searchParams, autoRunProcessed, loading, partner]);
 
   const getSelectedCrew = () => crews.find((c) => c.id === selectedCrewId);
 
@@ -1198,7 +1263,7 @@ export default function DashboardPage() {
                   // 全タスク完了
                   setCurrentExecutingTaskIndex(-1);
                   setShowProjectComplete(true);
-                  playSound('levelup');
+                  playSound('levelUp');
                   console.log('Project completed!');
                   break;
 
@@ -1222,6 +1287,210 @@ export default function DashboardPage() {
     }
   };
 
+  // Director Mode: プロジェクト開始・実行 v2（LangGraph + 自己修正ループ）
+  const handleStartProjectV2 = async () => {
+    if (!projectPlan) return;
+
+    // 全ての必須入力が埋まっているかチェック
+    const missingInputs = projectPlan.required_inputs.filter(
+      (inp) => !projectInputValues[inp.key]?.trim()
+    );
+    if (missingInputs.length > 0) {
+      playSound('error');
+      alert(`以下の情報を入力してください: ${missingInputs.map((i) => i.label).join(', ')}`);
+      return;
+    }
+
+    playSound('click');
+
+    // 実行モードに切り替え
+    setIsProjectExecuting(true);
+    setProjectExecutionResults([]);
+    setCurrentExecutingTaskIndex(0);
+    setExpandedTaskResults({});
+    setV2LoopProgress(null);
+
+    try {
+      // FormDataで送信（ファイルを含むため）
+      const formData = new FormData();
+      formData.append('project_title', projectPlan.project_title || '');
+      formData.append('description', projectPlan.description || '');
+      formData.append('user_goal', projectGoal);
+      formData.append('required_inputs_json', JSON.stringify(projectPlan.required_inputs));
+      formData.append('tasks_json', JSON.stringify(projectPlan.tasks));
+      formData.append('input_values_json', JSON.stringify(projectInputValues));
+      // Google認証済みの場合はアクセストークンを追加（スライド生成用）
+      if (session?.accessToken) {
+        formData.append('google_access_token', session.accessToken);
+      }
+
+      // ファイルを追加（キー名:::ファイル名 形式）
+      for (const [key, file] of Object.entries(projectInputFiles)) {
+        const blob = file.slice(0, file.size, file.type);
+        const renamedFile = new globalThis.File([blob], `${key}:::${file.name}`, { type: file.type });
+        formData.append('files', renamedFile);
+      }
+
+      // SSEストリーミングでタスク進捗を受信（v2エンドポイント）
+      const response = await fetch(apiUrl('/api/director/execute-stream-v2'), {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start project execution (v2)');
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              switch (data.type) {
+                case 'start':
+                  console.log(`[v2] Project started with ${data.total_tasks} tasks`);
+                  break;
+
+                case 'task_start':
+                  // タスク開始時に現在のインデックスを更新
+                  setCurrentExecutingTaskIndex(data.task_index);
+                  // v2ループ進捗を初期化
+                  setV2LoopProgress({
+                    task_index: data.task_index,
+                    crew_name: data.crew_name,
+                    crew_image: data.crew_image,
+                    current_revision: 0,
+                    max_revisions: 3,
+                    events: [],
+                  });
+                  playSound('click');
+                  console.log(`[v2] Task ${data.task_index} started: ${data.crew_name}`);
+                  break;
+
+                case 'generation_complete':
+                  // クルーが成果物を作成完了
+                  setV2LoopProgress((prev) => {
+                    if (!prev) return prev;
+                    return {
+                      ...prev,
+                      current_revision: data.revision_count || prev.current_revision,
+                      events: [
+                        ...prev.events,
+                        {
+                          type: 'generation_complete',
+                          message: data.message || `${data.crew_name}が成果物を作成しました`,
+                          draft_preview: data.draft_preview,
+                          timestamp: Date.now(),
+                        },
+                      ],
+                    };
+                  });
+                  console.log(`[v2] Generation complete: ${data.message}`);
+                  break;
+
+                case 'reflection_complete':
+                  // ディレクター評価完了
+                  setV2LoopProgress((prev) => {
+                    if (!prev) return prev;
+                    return {
+                      ...prev,
+                      events: [
+                        ...prev.events,
+                        {
+                          type: 'reflection_complete',
+                          message: data.message || `ディレクター評価: ${data.score}点`,
+                          score: data.score,
+                          critique: data.critique,
+                          timestamp: Date.now(),
+                        },
+                      ],
+                    };
+                  });
+                  // スコアに応じた効果音
+                  if (data.score >= 70) {
+                    playSound('confirm');
+                  }
+                  console.log(`[v2] Reflection complete: score=${data.score}`);
+                  break;
+
+                case 'revision_start':
+                  // 修正開始
+                  setV2LoopProgress((prev) => {
+                    if (!prev) return prev;
+                    return {
+                      ...prev,
+                      events: [
+                        ...prev.events,
+                        {
+                          type: 'revision_start',
+                          message: data.message || `修正を開始します...`,
+                          score: data.score,
+                          critique: data.critique,
+                          timestamp: Date.now(),
+                        },
+                      ],
+                    };
+                  });
+                  playSound('click');
+                  console.log(`[v2] Revision start: ${data.message}`);
+                  break;
+
+                case 'task_complete':
+                  // タスク完了時に結果を追加（v2はスコア・修正回数付き）
+                  setProjectExecutionResults((prev) => [...prev, data.task_result]);
+                  setV2LoopProgress(null); // ループ進捗をリセット
+                  playSound('confirm');
+                  console.log(`[v2] Task ${data.task_index} completed: score=${data.task_result.score}, revisions=${data.task_result.revision_count}`);
+                  break;
+
+                case 'complete':
+                  // 全タスク完了
+                  setCurrentExecutingTaskIndex(-1);
+                  setShowProjectComplete(true);
+                  setV2LoopProgress(null);
+                  playSound('levelUp');
+                  console.log('[v2] Project completed!');
+                  break;
+
+                case 'error':
+                  playSound('error');
+                  alert(data.error || 'プロジェクトの実行に失敗しました');
+                  setIsProjectExecuting(false);
+                  setV2LoopProgress(null);
+                  break;
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Execute project v2 error:', error);
+      playSound('error');
+      alert('プロジェクトの実行に失敗しました');
+      setIsProjectExecuting(false);
+      setV2LoopProgress(null);
+    }
+  };
+
   // プロジェクト完了後の処理
   const handleProjectComplete = () => {
     setShowProjectComplete(false);
@@ -1232,6 +1501,58 @@ export default function DashboardPage() {
     setProjectInputValues({});
     setProjectInputFiles({});
     setProjectExecutionResults([]);
+    setV2LoopProgress(null);
+    // 保存モーダルもリセット
+    setShowSaveProjectModal(false);
+    setSaveProjectTitle('');
+    setSaveProjectDescription('');
+  };
+
+  // プロジェクト保存モーダルを開く
+  const handleOpenSaveProjectModal = () => {
+    playSound('click');
+    // デフォルトタイトルを設定
+    if (projectPlan?.title) {
+      setSaveProjectTitle(projectPlan.title);
+    } else if (projectGoal) {
+      setSaveProjectTitle(projectGoal.slice(0, 50));
+    }
+    setShowSaveProjectModal(true);
+  };
+
+  // プロジェクトを保存
+  const handleSaveProject = async () => {
+    if (!saveProjectTitle.trim() || !projectGoal) return;
+
+    setIsSavingProject(true);
+    try {
+      const response = await fetch(apiUrl('/api/saved-projects'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: saveProjectTitle.trim(),
+          description: saveProjectDescription.trim() || null,
+          prompt_template: projectGoal,
+          crew_id: null, // 自動選択
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save project');
+      }
+
+      playSound('success');
+      setShowSaveProjectModal(false);
+      setSaveProjectTitle('');
+      setSaveProjectDescription('');
+      alert('プロジェクトを保存しました！プロジェクト一覧から再実行できます。');
+    } catch (err) {
+      console.error('Failed to save project:', err);
+      playSound('error');
+      alert('プロジェクトの保存に失敗しました');
+    } finally {
+      setIsSavingProject(false);
+    }
   };
 
   // ファイルタイプを判定
@@ -1769,7 +2090,7 @@ export default function DashboardPage() {
                       }
                     }}
                     onPaste={handlePaste}
-                    placeholder={attachedFiles.length > 0 ? "添付ファイルについて質問..." : "タスクを入力（Ctrl+Enterで改行）"}
+                    placeholder={attachedFiles.length > 0 ? "添付ファイルについて質問..." : "タスクを入力（Shift+Enterで改行）"}
                     disabled={isSubmitting}
                     rows={1}
                     style={{ minHeight: '56px' }}
@@ -1831,7 +2152,54 @@ export default function DashboardPage() {
                     ※ プロジェクト機能を使うには、先に相棒を任命してください
                   </p>
                 )}
+                {/* v2モード切り替え */}
+                {partner && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playSound('select');
+                        setUseV2Mode(!useV2Mode);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        useV2Mode
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-500'
+                          : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg transition-transform ${
+                          useV2Mode ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className={`text-xs font-medium ${
+                      useV2Mode
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-gray-500 dark:text-gray-400'
+                    }`}>
+                      {useV2Mode ? 'v2 (AI自己修正)' : 'v1'}
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {/* v2モードの説明（有効時のみ） */}
+              {useV2Mode && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mb-3 p-3 bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 rounded-lg border border-emerald-200 dark:border-emerald-700"
+                >
+                  <div className="flex items-start gap-2">
+                    <Sparkles size={16} className="text-emerald-500 mt-0.5 shrink-0" />
+                    <div className="text-xs text-emerald-700 dark:text-emerald-300">
+                      <span className="font-semibold">AI自己修正モード:</span> 各タスクでディレクターが品質評価し、80点未満なら自動で修正を繰り返します（最大3回）。より高品質な成果物を生成します。
+                    </div>
+                  </div>
+                </motion.div>
+              )}
 
               {/* プロジェクト入力フォーム */}
               <form onSubmit={handleCreateProjectPlan} className="flex gap-3">
@@ -1861,7 +2229,7 @@ export default function DashboardPage() {
                         }
                       }
                     }}
-                    placeholder="作りたいものや目的を入力してください（Ctrl+Enterで改行）"
+                    placeholder="作りたいものや目的を入力してください（Shift+Enterで改行）"
                     disabled={isLoadingProjectPlan || !partner}
                     rows={1}
                     style={{ minHeight: '56px' }}
@@ -2821,7 +3189,13 @@ export default function DashboardPage() {
                 )}
 
                 {/* ヘッダー */}
-                <div className={`p-5 ${isProjectExecuting ? 'bg-gradient-to-r from-green-600 to-emerald-600' : 'bg-gradient-to-r from-purple-600 to-indigo-600'}`}>
+                <div className={`p-5 ${
+                  isProjectExecuting
+                    ? useV2Mode
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600'
+                      : 'bg-gradient-to-r from-green-600 to-emerald-600'
+                    : 'bg-gradient-to-r from-purple-600 to-indigo-600'
+                }`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       {projectPlan.partner_image && (
@@ -2840,12 +3214,19 @@ export default function DashboardPage() {
                         </motion.div>
                       )}
                       <div>
-                        <h3 className="text-white font-bold text-xl">
+                        <h3 className="text-white font-bold text-xl flex items-center gap-2">
                           {projectPlan.project_title}
+                          {useV2Mode && isProjectExecuting && (
+                            <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">v2</span>
+                          )}
                         </h3>
                         <p className="text-white/80 text-sm">
                           {isProjectExecuting
-                            ? (showProjectComplete ? 'プロジェクト完了！' : 'プロジェクト実行中...')
+                            ? (showProjectComplete
+                              ? 'プロジェクト完了！'
+                              : useV2Mode
+                                ? 'AI自己修正モードで実行中...'
+                                : 'プロジェクト実行中...')
                             : `${projectPlan.partner_name}が以下のプランを立てました`
                           }
                         </p>
@@ -2985,6 +3366,25 @@ export default function DashboardPage() {
                                   className="border-t border-gray-200 dark:border-gray-700"
                                 >
                                   <div className="p-4 bg-white/50 dark:bg-gray-900/50">
+                                    {/* v2モードの場合: スコアと修正回数を表示 */}
+                                    {useV2Mode && result.score !== undefined && (
+                                      <div className="mb-3 flex items-center gap-3 flex-wrap">
+                                        <div className={`px-3 py-1 rounded-full text-sm font-bold ${
+                                          result.score >= 70
+                                            ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400'
+                                            : result.score >= 60
+                                            ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400'
+                                            : 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400'
+                                        }`}>
+                                          スコア: {result.score}点
+                                        </div>
+                                        {result.revision_count !== undefined && result.revision_count > 1 && (
+                                          <div className="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-400">
+                                            修正回数: {result.revision_count - 1}回
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                     <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
                                       {result.result}
                                     </p>
@@ -2992,6 +3392,69 @@ export default function DashboardPage() {
                                 </motion.div>
                               )}
                             </AnimatePresence>
+
+                            {/* v2モード: 自己修正ループ進捗表示 */}
+                            {useV2Mode && isCurrentTask && v2LoopProgress && v2LoopProgress.task_index === index && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                className="border-t border-blue-200 dark:border-blue-700 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30"
+                              >
+                                <div className="p-4">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <Sparkles size={16} className="text-blue-500" />
+                                    <span className="text-sm font-bold text-blue-700 dark:text-blue-300">
+                                      AI自己修正ループ
+                                    </span>
+                                    <span className="text-xs text-blue-500 dark:text-blue-400">
+                                      (修正 {v2LoopProgress.current_revision}/{v2LoopProgress.max_revisions})
+                                    </span>
+                                  </div>
+
+                                  {/* イベントログ */}
+                                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                                    {v2LoopProgress.events.map((event, eventIdx) => (
+                                      <motion.div
+                                        key={eventIdx}
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        className={`flex items-start gap-2 text-xs ${
+                                          event.type === 'generation_complete'
+                                            ? 'text-purple-600 dark:text-purple-400'
+                                            : event.type === 'reflection_complete'
+                                            ? event.score && event.score >= 70
+                                              ? 'text-green-600 dark:text-green-400'
+                                              : 'text-amber-600 dark:text-amber-400'
+                                            : 'text-blue-600 dark:text-blue-400'
+                                        }`}
+                                      >
+                                        <span className="shrink-0">
+                                          {event.type === 'generation_complete' && '✍️'}
+                                          {event.type === 'reflection_complete' && (event.score && event.score >= 70 ? '✅' : '📝')}
+                                          {event.type === 'revision_start' && '🔄'}
+                                        </span>
+                                        <span>{event.message}</span>
+                                        {event.score !== undefined && (
+                                          <span className={`ml-auto font-bold ${
+                                            event.score >= 70 ? 'text-green-500' : 'text-amber-500'
+                                          }`}>
+                                            {event.score}点
+                                          </span>
+                                        )}
+                                      </motion.div>
+                                    ))}
+
+                                    {/* 現在処理中のインジケーター */}
+                                    {v2LoopProgress.events.length === 0 && (
+                                      <div className="flex items-center gap-2 text-xs text-blue-500">
+                                        <Loader2 size={12} className="animate-spin" />
+                                        <span>{v2LoopProgress.crew_name}が成果物を作成中...</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
                           </motion.div>
                         );
                       })}
@@ -3168,14 +3631,25 @@ export default function DashboardPage() {
                 <div className="border-t border-gray-200 dark:border-gray-700 p-4 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
                   {showProjectComplete ? (
                     /* 完了時のフッター */
-                    <div className="w-full flex justify-center">
+                    <div className="w-full flex justify-center gap-3">
+                      <motion.button
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={handleOpenSaveProjectModal}
+                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg"
+                      >
+                        <Save size={20} />
+                        このプロジェクトを保存
+                      </motion.button>
                       <motion.button
                         initial={{ scale: 0.9, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={handleProjectComplete}
-                        className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold px-8 py-3 rounded-xl flex items-center gap-2 shadow-lg"
+                        className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg"
                       >
                         <CheckCircle2 size={20} />
                         完了して閉じる
@@ -3209,17 +3683,21 @@ export default function DashboardPage() {
                       <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={handleStartProject}
+                        onClick={useV2Mode ? handleStartProjectV2 : handleStartProject}
                         disabled={
                           projectPlan.required_inputs.length > 0 &&
                           projectPlan.required_inputs.some(
                             (inp) => !projectInputValues[inp.key]?.trim()
                           )
                         }
-                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg"
+                        className={`${
+                          useV2Mode
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                            : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700'
+                        } disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-6 py-3 rounded-xl flex items-center gap-2 shadow-lg`}
                       >
-                        <Rocket size={18} />
-                        プロジェクトを開始する
+                        {useV2Mode ? <Sparkles size={18} /> : <Rocket size={18} />}
+                        {useV2Mode ? 'v2で開始する（AI自己修正）' : 'プロジェクトを開始する'}
                       </motion.button>
                     </>
                   )}
@@ -3228,7 +3706,117 @@ export default function DashboardPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* プロジェクト保存モーダル */}
+        <AnimatePresence>
+          {showSaveProjectModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+              >
+                {/* ヘッダー */}
+                <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-4 flex items-center justify-between">
+                  <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                    <Save size={20} />
+                    プロジェクトを保存
+                  </h3>
+                  <button
+                    onClick={() => setShowSaveProjectModal(false)}
+                    className="text-white/80 hover:text-white transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                {/* フォーム */}
+                <div className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      プロジェクト名 <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={saveProjectTitle}
+                      onChange={(e) => setSaveProjectTitle(e.target.value)}
+                      placeholder="例: 週次レポート作成"
+                      className="w-full px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      説明（任意）
+                    </label>
+                    <textarea
+                      value={saveProjectDescription}
+                      onChange={(e) => setSaveProjectDescription(e.target.value)}
+                      placeholder="このプロジェクトの説明..."
+                      rows={3}
+                      className="w-full px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                    />
+                  </div>
+
+                  <div className="bg-gray-50 dark:bg-gray-900 rounded-xl p-3">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">保存される指示内容:</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
+                      {projectGoal}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={() => setShowSaveProjectModal(false)}
+                      className="flex-1 py-2 px-4 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      キャンセル
+                    </button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleSaveProject}
+                      disabled={!saveProjectTitle.trim() || isSavingProject}
+                      className="flex-1 py-2 px-4 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isSavingProject ? (
+                        <>
+                          <Loader2 size={18} className="animate-spin" />
+                          保存中...
+                        </>
+                      ) : (
+                        <>
+                          <Save size={18} />
+                          保存する
+                        </>
+                      )}
+                    </motion.button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </>
+  );
+}
+
+// Suspense境界でラップしたエクスポート用コンポーネント
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent"></div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }

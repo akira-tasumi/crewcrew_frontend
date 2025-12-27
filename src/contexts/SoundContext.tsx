@@ -20,18 +20,18 @@ export type SoundType =
 
 // 音源ファイルのマッピング
 const SOUND_FILES: Record<SoundType, string> = {
-  click: "/sounds/決定6.mp3",
-  success: "/sounds/完了3.mp3",
-  levelUp: "/sounds/正解4.mp3",
-  scout: "/sounds/マリンバグリッサンド1.mp3",
-  cardFlip: "/sounds/カードめくり2.mp3",
-  coin: "/sounds/お金ジャラジャラ1.mp3",
-  error: "/sounds/エラー1.mp3",
-  confirm: "/sounds/確認2.mp3",
-  select: "/sounds/選択1.mp3",
-  typing: "/sounds/文字送りa長.mp3",
-  drumroll: "/sounds/制限時間2.mp3",
-  celebrate: "/sounds/クラッカー.mp3",
+  click: "/sounds/click.mp3",
+  success: "/sounds/success.mp3",
+  levelUp: "/sounds/levelup.mp3",
+  scout: "/sounds/scout.mp3",
+  cardFlip: "/sounds/card_flip.mp3",
+  coin: "/sounds/coin.mp3",
+  error: "/sounds/error.mp3",
+  confirm: "/sounds/confirm.mp3",
+  select: "/sounds/select.mp3",
+  typing: "/sounds/typing.mp3",
+  drumroll: "/sounds/drumroll.mp3",
+  celebrate: "/sounds/celebrate.mp3",
 };
 
 // デフォルトの音量（0.0 〜 1.0）- 業務アプリなので控えめに

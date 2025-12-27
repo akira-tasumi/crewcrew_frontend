@@ -430,7 +430,6 @@ export default function CrewDetailModal({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
-        onClick={evolutionPhase === 'idle' || evolutionPhase === 'complete' ? onClose : undefined}
         style={evolutionPhase === 'whiteout' ? { background: 'rgba(255,255,255,0.9)' } : {}}
       >
         {/* CSS for shake animation */}
